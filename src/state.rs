@@ -125,7 +125,7 @@ pub(crate) struct AppState {
 impl AppState {
     pub(crate) fn new(dir: &str) -> Self {
         let store = Arc::new(Store::load(dir));
-        let auth = Arc::new(init_web_auth(&store));
+        let auth = Arc::new(std::sync::RwLock::new(init_web_auth(&store)));
         AppState {
             store,
             drivers: Arc::new(Mutex::new(HashMap::new())),

@@ -16,28 +16,40 @@
 ## 启动参数
 
 ```
-openlist.exe [OPTIONS]
+openlist.exe [OPTIONS] [COMMAND]
 
-  -a, --addr <ADDR>      监听地址，默认 127.0.0.1；局域网访问用 0.0.0.0
-  -p, --port <PORT>      监听端口，默认 5299
+  -a, --addr <ADDR>      监听地址，默认 0.0.0.0；仅本机用 127.0.0.1
+  -p, --port <PORT>      监听端口，默认 5244
   -d, --dir <PATH>       数据目录，默认 data（数据库与加密密钥存放于此）
-      --web-user <USER>  面板登录用户名（设置后启用鉴权）
-      --web-pass <PASS>  面板登录密码（缺省时随机生成并打印到控制台）
+
+Commands:
+  reset-user   重置面板账号为 admin，密码随机生成替换并打印到终端
+  set-account  交互式设置面板登录用户名
+  set-password 交互式设置面板登录密码
 ```
 
-鉴权也可以用环境变量 `OPENLIST_WEB_USER` / `OPENLIST_WEB_PASS`。不设用户名时面板免登录。
+面板鉴权始终启用。账号密码持久化在加密数据库中：
+
+- **首次启动**：自动初始化为 `admin` + 随机 8 位密码，密码打印到终端并写入数据库
+- **之后启动**：直接读取数据库中的账号密码，不再生成、不再打印
+- 忘记密码时用 `reset-user` 重置（admin + 新随机密码），或用 `set-account` / `set-password` 交互式修改
+- 面板「设置」页也可在线修改账号和密码（保存后所有会话失效，需重新登录）
 
 示例：
 
 ```
-# 本机使用，免登录
+# 首次启动：打印随机密码（默认 0.0.0.0:5244，数据目录 data）
 openlist-rs.exe
 
-# 局域网开放 + 鉴权，指定端口和数据目录
-openlist-rs.exe -a 0.0.0.0 -p 8080 --web-user admin --web-pass 123456 -d D:\olm
+# 局域网开放 + 指定端口和数据目录
+openlist-rs.exe -a 0.0.0.0 -p 8080 -d D:\olm
 
-# 只给用户名，密码随机生成（启动时打印）
-openlist-rs.exe --web-user admin
+# 忘记密码：重置为 admin + 新随机密码
+openlist-rs.exe reset-user -d D:\olm
+
+# 交互式修改用户名 / 密码
+openlist-rs.exe set-account
+openlist-rs.exe set-password
 ```
 
 - 账号数据持久化到 `<数据目录>/openlist.redb`（redb 嵌入式数据库），写入前用 AES-256-GCM 加密
@@ -48,7 +60,7 @@ openlist-rs.exe --web-user admin
 
 ## 运行
 
-启动后访问 `http://<addr>:<port>`（默认 http://127.0.0.1:5299）。
+启动后访问 `http://<addr>:<port>`（默认 http://0.0.0.0:5244，本机用 http://127.0.0.1:5244）。
 
 ## 开发
 
@@ -82,9 +94,11 @@ NovaTV 接入：设置里添加 OpenList → 服务器地址填本服务地址 �
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/auth/status` | 查询是否启用鉴权（免登录可访问） |
+| GET | `/api/auth/status` | 查询是否启用鉴权（鉴权始终启用） |
 | POST | `/api/login` | 面板登录 `{username, password}`，成功设置会话 Cookie |
 | POST | `/api/logout` | 退出登录 |
+| GET | `/api/web/user` | 当前面板登录用户名（设置页回填） |
+| POST | `/api/web/settings` | 修改面板用户名/密码 `{username?, password?}`，成功后清空全部会话 |
 | GET | `/api/accounts` | 列出账号（含 `enabled` 状态） |
 | POST | `/api/accounts` | 添加账号 |
 | PUT | `/api/accounts/{id}` | 编辑账号凭据（重新验证） |

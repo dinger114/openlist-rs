@@ -28,7 +28,7 @@ struct Args {
     port: u16,
 
     /// 数据目录（数据库 openlist.redb 与加密密钥 openlist.key 所在目录）
-    #[arg(short = 'd', long, default_value = "data")]
+    #[arg(short = 'd', long, default_value = "data", global = true)]
     dir: String,
 
     #[command(subcommand)]

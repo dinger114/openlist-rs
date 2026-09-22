@@ -145,26 +145,20 @@ pub(crate) async fn update_web_settings(
     State(st): State<AppState>,
     Json(req): Json<WebSettingsReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let username = req
-        .username
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let password = req
-        .password
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    if username.is_none() && password.is_none() {
+    let user_ref = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let pass_ref = req.password.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if user_ref.is_none() && pass_ref.is_none() {
         return Err((StatusCode::BAD_REQUEST, "用户名和密码均未填写".to_string()));
     }
     st.store
-        .update_web_auth(username, password)
+        .update_web_auth(user_ref.map(String::from), pass_ref.map(String::from))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))?;
     {
         let mut auth = st.auth.write().unwrap();
-        if let Some(u) = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(u) = user_ref {
             auth.user = u.to_string();
         }
-        if let Some(p) = req.password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(p) = pass_ref {
             auth.pass = p.to_string();
         }
     }
