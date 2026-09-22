@@ -241,17 +241,11 @@ pub(crate) async fn compat_login(
     State(st): State<AppState>,
     Json(req): Json<CompatLoginReq>,
 ) -> Response {
-    let Some(auth) = &st.auth else {
-        // 未启用面板鉴权：签发一个会话 token（校验时放行）
-        let token = uuid::Uuid::new_v4().to_string();
-        st.sessions.lock().unwrap().insert(token.clone());
-        return (
-            StatusCode::OK,
-            Json(json!({ "code": 200, "message": "success", "data": { "token": token } })),
-        )
-            .into_response();
+    let valid = {
+        let auth = st.auth.read().unwrap();
+        req.username == auth.user && req.password == auth.pass
     };
-    if req.username != auth.user || req.password != auth.pass {
+    if !valid {
         return compat_err("用户名或密码错误", 400);
     }
     let token = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().simple().to_string();

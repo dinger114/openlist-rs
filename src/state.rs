@@ -64,11 +64,54 @@ pub(crate) struct AuthCfg {
     pub(crate) pass: String,
 }
 
+/// 随机 8 位密码（去除易混淆字符的字母 + 数字）
+pub(crate) fn random_password() -> String {
+    const CHARSET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..8)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
+}
+
+/// 面板鉴权初始化：数据库已有账号密码则直接使用（不再打印）；
+/// 缺失时初始化为 admin + 随机 8 位密码，打印到终端并持久化（之后启动不再生成）
+fn init_web_auth(store: &Store) -> AuthCfg {
+    let (user_opt, pass_opt) = {
+        let data = store.data.lock().unwrap();
+        (data.web_user.clone(), data.web_pass.clone())
+    };
+    let mut user = user_opt.filter(|s| !s.is_empty());
+    let mut pass = pass_opt.filter(|s| !s.is_empty());
+    let mut changed = false;
+    if user.is_none() {
+        println!("面板用户名未设置，已初始化为: admin");
+        user = Some("admin".to_string());
+        changed = true;
+    }
+    if pass.is_none() {
+        let p = random_password();
+        println!("面板密码未设置，已生成随机密码: {p}");
+        pass = Some(p);
+        changed = true;
+    }
+    if changed {
+        store
+            .update_web_auth(user.clone(), pass.clone())
+            .unwrap_or_else(|e| eprintln!("面板账号持久化失败: {e}"));
+    }
+    AuthCfg {
+        user: user.unwrap(),
+        pass: pass.unwrap(),
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) store: Arc<Store>,
     pub(crate) drivers: Arc<Mutex<HashMap<String, Arc<Driver>>>>,
-    pub(crate) auth: Option<Arc<AuthCfg>>,
+    /// 面板登录凭据（始终启用鉴权； RwLock 支持设置页在线修改）
+    pub(crate) auth: Arc<std::sync::RwLock<AuthCfg>>,
     pub(crate) sessions: Arc<Mutex<HashSet<String>>>,
     /// OpenList 兼容层：归一化路径 -> (账号id, Entry)，浏览时逐步注册
     pub(crate) index: Arc<Mutex<HashMap<String, (String, Entry)>>>,
@@ -80,41 +123,9 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    pub(crate) fn new(
-        dir: &str,
-        web_user: Option<String>,
-        web_pass: Option<String>,
-    ) -> Self {
+    pub(crate) fn new(dir: &str) -> Self {
         let store = Arc::new(Store::load(dir));
-        // 鉴权：--web-user/env 提供用户名即启用；密码缺省则随机生成打印
-        let env_user = std::env::var("OPENLIST_WEB_USER")
-            .ok()
-            .filter(|s| !s.is_empty());
-        let env_pass = std::env::var("OPENLIST_WEB_PASS")
-            .ok()
-            .filter(|s| !s.is_empty());
-        let auth =
-            match (web_user.or(env_user), web_pass.or(env_pass)) {
-                (Some(user), pass) => {
-                    let pass = pass.unwrap_or_else(|| {
-                        let generated = format!(
-                            "{}{}",
-                            uuid::Uuid::new_v4().simple(),
-                            uuid::Uuid::new_v4().simple()
-                        )[..16]
-                            .to_string();
-                        println!("未指定 --web-pass，已自动生成面板密码: {generated}");
-                        generated
-                    });
-                    Some(Arc::new(AuthCfg { user, pass }))
-                }
-                _ => {
-                    println!(
-                        "未设置面板账号（--web-user/--web-pass 或 OPENLIST_WEB_USER/OPENLIST_WEB_PASS），面板免登录访问"
-                    );
-                    None
-                }
-            };
+        let auth = Arc::new(init_web_auth(&store));
         AppState {
             store,
             drivers: Arc::new(Mutex::new(HashMap::new())),

@@ -562,6 +562,12 @@ fn default_root() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub accounts: Vec<Account>,
+    /// 面板登录用户名（None/空 = 首次启动时初始化为 admin）
+    #[serde(default)]
+    pub web_user: Option<String>,
+    /// 面板登录密码（None/空 = 首次启动时随机生成并打印到终端）
+    #[serde(default)]
+    pub web_pass: Option<String>,
 }
 
 /// 文件条目（驱动无关的统一模型）
@@ -669,6 +675,18 @@ impl Store {
             f(&mut acc.cred);
             let _ = self.save(&data);
         }
+    }
+
+    /// 更新面板登录账号/密码（None 表示保持该项不变），加密持久化到数据库
+    pub fn update_web_auth(&self, user: Option<String>, pass: Option<String>) -> std::io::Result<()> {
+        let mut data = self.data.lock().unwrap();
+        if user.is_some() {
+            data.web_user = user;
+        }
+        if pass.is_some() {
+            data.web_pass = pass;
+        }
+        self.save(&data)
     }
 }
 

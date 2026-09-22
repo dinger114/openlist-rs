@@ -25,6 +25,9 @@
           <button class="nav-btn" :class="{ active: view === 'accounts' }" @click="view = 'accounts'">
             存储管理
           </button>
+          <button class="nav-btn" :class="{ active: view === 'settings' }" @click="view = 'settings'">
+            设置
+          </button>
         </nav>
 
         <div class="header-actions">
@@ -52,8 +55,13 @@
       @refresh="loadAccounts"
     />
 
+    <SettingsView
+      v-else-if="view === 'settings'"
+      @saved="onSettingsSaved"
+    />
+
     <FilesView
-      v-else
+      v-if="view !== 'accounts' && view !== 'settings'"
       :accounts="accounts"
       :current-id="currentId"
       :crumbs="crumbs"
@@ -168,6 +176,7 @@ import Logo from './components/Logo.vue'
 import LoginView from './components/LoginView.vue'
 import AccountsView from './components/AccountsView.vue'
 import FilesView from './components/FilesView.vue'
+import SettingsView from './components/SettingsView.vue'
 import { kindOf } from './filekinds.js'
 
 const loginViewRef = ref(null)
@@ -321,6 +330,11 @@ async function guestBrowse() {
 
 async function doLogout() {
   await fetch('/api/logout', { method: 'POST' }).catch(() => {})
+  needLogin.value = true
+}
+
+// 设置页保存成功：服务端已清空全部会话，弹出登录页用新凭据重新登录
+function onSettingsSaved() {
   needLogin.value = true
 }
 

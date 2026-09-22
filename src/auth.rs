@@ -15,9 +15,6 @@ pub(crate) async fn auth_guard(
     req: Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
-    if st.auth.is_none() {
-        return next.run(req).await;
-    }
     let path = req.uri().path();
     if path.starts_with("/api")
         && path != "/api/login"
@@ -86,11 +83,11 @@ pub(crate) struct LoginReq {
 
 /// POST /api/login —— 面板登录（Cookie 会话）
 pub(crate) async fn login(State(st): State<AppState>, Json(req): Json<LoginReq>) -> Response {
-    let Some(auth) = &st.auth else {
-        // 未启用鉴权时直接放行
-        return Json(json!({ "ok": true })).into_response();
+    let valid = {
+        let auth = st.auth.read().unwrap();
+        req.username == auth.user && req.password == auth.pass
     };
-    if req.username != auth.user || req.password != auth.pass {
+    if !valid {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "用户名或密码错误" })),
@@ -126,7 +123,51 @@ pub(crate) async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Re
     resp
 }
 
-/// GET /api/auth/status —— 查询是否启用鉴权（免登录可访问）
-pub(crate) async fn auth_status(State(st): State<AppState>) -> Json<serde_json::Value> {
-    Json(json!({ "enabled": st.auth.is_some() }))
+/// GET /api/auth/status —— 鉴权始终启用（保留端点供前端判断登出按钮）
+pub(crate) async fn auth_status() -> Json<serde_json::Value> {
+    Json(json!({ "enabled": true }))
+}
+
+/// GET /api/web/user —— 当前面板登录用户名（设置页回填）
+pub(crate) async fn get_web_user(State(st): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "username": st.auth.read().unwrap().user }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WebSettingsReq {
+    username: Option<String>,
+    password: Option<String>,
+}
+
+/// POST /api/web/settings —— 修改面板用户名/密码（None = 保持不变）。
+/// 成功后同步内存凭据并清空全部会话，所有端需重新登录。
+pub(crate) async fn update_web_settings(
+    State(st): State<AppState>,
+    Json(req): Json<WebSettingsReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let username = req
+        .username
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let password = req
+        .password
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if username.is_none() && password.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "用户名和密码均未填写".to_string()));
+    }
+    st.store
+        .update_web_auth(username, password)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))?;
+    {
+        let mut auth = st.auth.write().unwrap();
+        if let Some(u) = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            auth.user = u.to_string();
+        }
+        if let Some(p) = req.password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            auth.pass = p.to_string();
+        }
+    }
+    st.sessions.lock().unwrap().clear();
+    Ok(Json(json!({ "ok": true })))
 }

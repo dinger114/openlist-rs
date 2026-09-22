@@ -6,8 +6,9 @@ mod config;
 mod drivers;
 mod state;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use state::AppState;
+use std::io::{BufRead, Write};
 use axum::{
     routing::{delete, get, patch, post},
     Router,
@@ -16,33 +17,45 @@ use axum::{
 // ---------- CLI ----------
 
 #[derive(Parser, Debug)]
-#[command(name = "openlist-mini", version, about = "OpenList Mini - 夸克/123 网盘浏览下载")]
+#[command(name = "openlist-rs", version, about = "OpenList Rust 版 - 多网盘浏览下载")]
 struct Args {
-    /// 监听地址：127.0.0.1 仅本机，0.0.0.0 局域网开放
-    #[arg(short = 'a', long, default_value = "127.0.0.1")]
+    /// 监听地址：0.0.0.0 局域网开放，127.0.0.1 仅本机
+    #[arg(short = 'a', long, default_value = "0.0.0.0")]
     addr: String,
 
     /// 监听端口
-    #[arg(short = 'p', long, default_value_t = 5299)]
+    #[arg(short = 'p', long, default_value_t = 5244)]
     port: u16,
 
     /// 数据目录（数据库 openlist.redb 与加密密钥 openlist.key 所在目录）
     #[arg(short = 'd', long, default_value = "data")]
     dir: String,
 
-    /// 面板登录用户名（设置后启用鉴权；也可用环境变量 OPENLIST_WEB_USER）
-    #[arg(long)]
-    web_user: Option<String>,
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
 
-    /// 面板登录密码（不传则随机生成并打印；也可用环境变量 OPENLIST_WEB_PASS）
-    #[arg(long)]
-    web_pass: Option<String>,
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// 重置面板账号为 admin，密码随机生成替换数据库并打印到终端
+    ResetUser,
+    /// 交互式设置面板登录用户名（替换数据库中的账号）
+    SetAccount,
+    /// 交互式设置面板登录密码（替换数据库中的密码）
+    SetPassword,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let state = AppState::new(&args.dir, args.web_user.clone(), args.web_pass.clone());
+
+    // 账号管理子命令：操作数据库后直接退出，不启动服务
+    if let Some(cmd) = args.cmd {
+        run_command(cmd, &args.dir);
+        return;
+    }
+
+    let state = AppState::new(&args.dir);
 
     let app = Router::new()
         // 自有面板 API
@@ -56,6 +69,9 @@ async fn main() {
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/auth/status", get(auth::auth_status))
+        // 面板账号设置（设置页）
+        .route("/api/web/user", get(auth::get_web_user))
+        .route("/api/web/settings", post(auth::update_web_settings))
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
         .route("/api/fs/list", post(compat::compat_fs_list))
@@ -79,10 +95,80 @@ async fn main() {
         .with_state(state);
 
     let addr = format!("{}:{}", args.addr, args.port);
-    println!("OpenList Mini 运行中: http://{addr}");
+    println!("OpenList 运行中: http://{addr}");
     println!("数据目录: {}", args.dir);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("监听 {addr} 失败: {e}"));
     axum::serve(listener, app).await.unwrap();
+}
+
+fn run_command(cmd: Cmd, dir: &str) {
+    match cmd {
+        Cmd::ResetUser => {
+            let store = config::Store::load(dir);
+            let pass = state::random_password();
+            store
+                .update_web_auth(Some("admin".to_string()), Some(pass.clone()))
+                .unwrap_or_else(|e| panic!("写入数据库失败: {e}"));
+            println!("面板账号已重置");
+            println!("用户名: admin");
+            println!("密码: {pass}");
+        }
+        Cmd::SetAccount => {
+            let user = prompt_input("请输入新的面板用户名: ");
+            let store = config::Store::load(dir);
+            // 数据库尚无密码时补一个随机密码，避免出现“有账号无密码”
+            let need_pass = {
+                let data = store.data.lock().unwrap();
+                data.web_pass.as_deref().map(str::is_empty).unwrap_or(true)
+            };
+            let pass = if need_pass {
+                let p = state::random_password();
+                println!("数据库未设置密码，已生成随机密码: {p}");
+                Some(p)
+            } else {
+                None
+            };
+            store
+                .update_web_auth(Some(user), pass)
+                .unwrap_or_else(|e| panic!("写入数据库失败: {e}"));
+            println!("面板用户名已更新");
+        }
+        Cmd::SetPassword => {
+            let pass = prompt_input("请输入新的面板密码: ");
+            let store = config::Store::load(dir);
+            // 数据库尚无账号时补默认 admin，避免出现“有密码无账号”
+            let need_user = {
+                let data = store.data.lock().unwrap();
+                data.web_user.as_deref().map(str::is_empty).unwrap_or(true)
+            };
+            let user = if need_user {
+                println!("数据库未设置用户名，已设置为: admin");
+                Some("admin".to_string())
+            } else {
+                None
+            };
+            store
+                .update_web_auth(user, Some(pass))
+                .unwrap_or_else(|e| panic!("写入数据库失败: {e}"));
+            println!("面板密码已更新");
+        }
+    }
+}
+
+/// 读取一行终端输入（去除首尾空白），空输入报错退出
+fn prompt_input(prompt: &str) -> String {
+    print!("{prompt}");
+    std::io::stdout().flush().unwrap();
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .unwrap_or_else(|e| panic!("读取输入失败: {e}"));
+    let trimmed = line.trim().to_string();
+    if trimmed.is_empty() {
+        panic!("输入不能为空");
+    }
+    trimmed
 }
