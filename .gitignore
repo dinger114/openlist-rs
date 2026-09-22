@@ -1,0 +1,10 @@
+# 注释以 # 开头
+
+# 忽略某种后缀的所有文件
+*.log
+*.tmp
+
+# 忽略整个文件夹
+web/node_modules/
+web/dist/
+target/

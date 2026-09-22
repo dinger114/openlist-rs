@@ -1,0 +1,158 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
+        default: 'v0.1.0'
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  BIN_NAME: openlist-rs
+
+jobs:
+  build:
+    name: build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: openlist-rs-linux-amd64
+
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: openlist-rs-linux-arm64
+
+          # Windows x64
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: openlist-rs-windows-amd64
+
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            artifact: openlist-rs-macos-arm64
+
+          # Android arm64
+          - runner: ubuntu-latest
+            target: aarch64-linux-android
+            artifact: openlist-rs-android-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 前端构建（产物 web/dist 由 rust-embed 在编译期嵌入）
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Inject version into Cargo.toml
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${VERSION#v}"
+          sed -i.bak "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
+          rm -f Cargo.toml.bak
+
+      # 2. Rust 工具链
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # 3. 平台特定依赖
+      - name: Install musl-tools (Linux musl)
+        if: runner.os == 'Linux' && contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install Android NDK
+        if: contains(matrix.target, 'android')
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Set Android linker env
+        if: contains(matrix.target, 'android')
+        shell: bash
+        run: |
+          NDK_TOOLCHAIN="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${NDK_TOOLCHAIN}/aarch64-linux-android35-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=${NDK_TOOLCHAIN}/aarch64-linux-android35-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${NDK_TOOLCHAIN}/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Set linker env (Linux musl)
+        if: runner.os == 'Linux' && contains(matrix.target, 'musl')
+        run: |
+          T=${{ matrix.target }}
+          U=$(echo "$T" | tr '-' '_' | tr 'a-z' 'A-Z')
+          echo "CARGO_TARGET_${U}_LINKER=musl-gcc" >> "$GITHUB_ENV"
+          echo "CC_${U}=musl-gcc" >> "$GITHUB_ENV"
+          echo "AR_${U}=ar" >> "$GITHUB_ENV"
+
+      - name: Update Cargo.lock
+        run: cargo update
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-cargo-
+
+      # 4. 编译（rustls TLS，无 openssl 依赖）
+      - name: Build release
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # 5. 打包并发布
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          BIN_PATH="target/${{ matrix.target }}/release/$BIN_NAME"
+          cp "$BIN_PATH" "dist/$BIN_NAME"
+          tar -czf "${{ matrix.artifact }}.tar.gz" -C dist "$BIN_NAME"
+          sha256sum "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/$env:BIN_NAME.exe" "dist/$env:BIN_NAME.exe"
+          Compress-Archive -Path "dist/$env:BIN_NAME.exe" -DestinationPath "${{ matrix.artifact }}.zip"
+          $hash = (Get-FileHash "${{ matrix.artifact }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.artifact }}.zip" | Out-File -Encoding ascii "${{ matrix.artifact }}.zip.sha256"
+
+      - name: Upload release assets (Unix)
+        if: runner.os != 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: openlist-rs ${{ github.event.inputs.version }}
+          files: |
+            ${{ matrix.artifact }}.tar.gz
+
+      - name: Upload release assets (Windows)
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: openlist-rs ${{ github.event.inputs.version }}
+          files: |
+            ${{ matrix.artifact }}.zip

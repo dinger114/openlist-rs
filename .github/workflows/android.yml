@@ -1,0 +1,83 @@
+name: android test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BIN_NAME: openlist-rs
+  ARTIFACT: openlist-rs-android-arm64
+  TARGET: aarch64-linux-android
+
+jobs:
+  build-android:
+    name: build (android-arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. 前端构建
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      # 2. Rust 工具链
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      # 3. Android NDK
+      - name: Install Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Set Android linker env
+        run: |
+          NDK_TOOLCHAIN="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${NDK_TOOLCHAIN}/aarch64-linux-android35-clang" >> "$GITHUB_ENV"
+          echo "CC_aarch64_linux_android=${NDK_TOOLCHAIN}/aarch64-linux-android35-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${NDK_TOOLCHAIN}/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Update Cargo.lock
+        run: cargo update
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ env.TARGET }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ env.TARGET }}-cargo-
+
+      # 4. 编译
+      - name: Build release
+        run: cargo build --release --locked --target ${{ env.TARGET }}
+
+      # 5. 打包
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp "target/${{ env.TARGET }}/release/$BIN_NAME" "dist/$BIN_NAME"
+          tar -czf "${{ env.ARTIFACT }}.tar.gz" -C dist "$BIN_NAME"
+          sha256sum "${{ env.ARTIFACT }}.tar.gz" > "${{ env.ARTIFACT }}.tar.gz.sha256"
+
+      # 6. 上传到固定 tag: test
+      - name: Upload to release (test)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test
+          name: openlist-rs test
+          files: |
+            ${{ env.ARTIFACT }}.tar.gz
