@@ -925,6 +925,7 @@ pub(crate) async fn compat_fs_form(
             return compat_err(format!("打开临时文件失败: {e}"), 500);
         }
     };
+    // 交付给驱动；ProgressReader 正确传递 Pending 后，tokio::fs::File 也能完整读出（回归见 drivers/mod.rs 测试）
     let r = do_put(&st, &path, name, size, Box::pin(file), overwrite).await;
     let _ = tokio::fs::remove_file(&tmp_path).await;
     match r {

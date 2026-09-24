@@ -106,13 +106,22 @@ impl<R: AsyncRead + Unpin> AsyncRead for ProgressReader<R> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let before = buf.filled().len();
-        let _ = Pin::new(&mut self.inner).poll_read(cx, buf)?;
-        let after = buf.filled().len();
-        if after > before {
-            self.progress
-                .fetch_add((after - before) as u64, Ordering::Relaxed);
+        // 注意：这里必须显式匹配 Pending。写成 `let _ = ...poll_read(cx, buf)?;` 的话，
+        // `?` 对 Poll<Result<..>> 的 Pending 走的是 Continue（不是提前返回），
+        // 值被丢掉后继续执行、最后返回 Ready(Ok(())) 且 0 字节 —— 调用方会当成 EOF，
+        // 于是 tokio::fs::File 这类「首次 poll 返回 Pending」的 reader 上传时永远是空的。
+        match Pin::new(&mut self.inner).poll_read(cx, buf) {
+            std::task::Poll::Pending => std::task::Poll::Pending,
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Ready(Ok(())) => {
+                let after = buf.filled().len();
+                if after > before {
+                    self.progress
+                        .fetch_add((after - before) as u64, Ordering::Relaxed);
+                }
+                std::task::Poll::Ready(Ok(()))
+            }
         }
-        std::task::Poll::Ready(Ok(()))
     }
 }
 
@@ -1232,6 +1241,28 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归：ProgressReader 曾经把内层 Pending 当成 EOF —— tokio::fs::File 首次 poll 必 Pending
+    /// （读操作交给阻塞池），于是面板上传 /api/fs/form 永远读到 0 字节、交空分块清单。
+    #[tokio::test]
+    async fn progress_reader_over_tokio_file_reads_all_bytes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let p = std::env::temp_dir().join(format!("olrs-progress-{}.bin", std::process::id()));
+        let mut f = tokio::fs::File::create(&p).await.unwrap();
+        f.write_all(&vec![9u8; 1024]).await.unwrap();
+        f.flush().await.unwrap();
+        drop(f);
+
+        let file = tokio::fs::File::open(&p).await.unwrap();
+        let progress = Arc::new(AtomicU64::new(0));
+        let mut reader: Pin<Box<dyn AsyncRead + Send>> =
+            Box::pin(ProgressReader::new(file, progress.clone()));
+        let mut buf = vec![0u8; 4 * 1024 * 1024];
+        let n = reader.read(&mut buf).await.unwrap();
+        assert_eq!(n, 1024, "ProgressReader 把 Pending 当成了 EOF");
+        assert_eq!(progress.load(Ordering::Relaxed), 1024);
+        let _ = std::fs::remove_file(&p);
+    }
 
     #[test]
     fn test_truncate_bytes_ascii() {
