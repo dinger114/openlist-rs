@@ -46,10 +46,10 @@ jobs:
             artifact: openlist-rs-android-arm64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # 1. 前端构建（产物 web/dist 由 rust-embed 在编译期嵌入）
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Build frontend
@@ -106,7 +106,7 @@ jobs:
         run: cargo update
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -141,7 +141,7 @@ jobs:
 
       - name: Upload release assets (Unix)
         if: runner.os != 'Windows'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: openlist-rs ${{ github.event.inputs.version }}
@@ -150,7 +150,7 @@ jobs:
 
       - name: Upload release assets (Windows)
         if: runner.os == 'Windows'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: openlist-rs ${{ github.event.inputs.version }}
