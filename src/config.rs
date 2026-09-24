@@ -708,6 +708,11 @@ impl Store {
         }
     }
 
+    /// 下载链接签名密钥：由存储密钥域分离派生（见 src/sign.rs）
+    pub(crate) fn sign_secret(&self) -> [u8; 32] {
+        crate::sign::sign_secret(&self.key)
+    }
+
     pub fn save(&self, cfg: &Config) -> std::io::Result<()> {
         let plain = serde_json::to_vec(cfg)?;
         let blob = encrypt(&self.key, &plain).map_err(io_err)?;

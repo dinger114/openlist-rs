@@ -1,9 +1,10 @@
 use crate::api::{proxy_stream, sort_entries};
 use crate::config::{Account, Entry};
 use crate::drivers::PutInput;
+use crate::sign;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
@@ -118,15 +119,31 @@ fn rfc3339_cst(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}+08:00")
 }
 
-fn obj_resp_json(e: &Entry) -> Value {
+/// 拼接父路径与子项名（对齐 Go `stdpath.Join`，父路径已规范化、名字不含 '/'）
+fn join_path(parent: &str, name: &str) -> String {
+    if parent.ends_with('/') {
+        format!("{parent}{name}")
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+/// 对象 JSON。`path` 是该对象的完整路径，用于生成 `sign` 字段：
+/// 目录留空（对齐 Go `common.Sign`），文件给出链接签名，客户端可直接拼 /d、/p 链接。
+fn obj_resp_json(e: &Entry, path: &str, secret: &[u8]) -> Value {
     let modified = e.updated_at.map(rfc3339_cst);
+    let sign_val = if e.is_dir {
+        String::new()
+    } else {
+        sign::sign(path, 0, secret)
+    };
     json!({
         "name": e.name,
         "size": e.size,
         "is_dir": e.is_dir,
         "modified": modified,
         "created": modified,
-        "sign": "",
+        "sign": sign_val,
         "thumb": "",
         "type": obj_type(&e.name, e.is_dir),
         "hashinfo": "",
@@ -298,7 +315,12 @@ pub(crate) async fn compat_fs_list(
     let page = if req.page <= 0 { 1 } else { req.page };
     let start = (((page - 1) * per_page).clamp(0, total)) as usize;
     let end = ((page * per_page).clamp(0, total)) as usize;
-    let content: Vec<Value> = entries[start..end].iter().map(obj_resp_json).collect();
+    let secret = st.store.sign_secret();
+    let parent = normalize_path(&req.path);
+    let content: Vec<Value> = entries[start..end]
+        .iter()
+        .map(|e| obj_resp_json(e, &join_path(&parent, &e.name), &secret))
+        .collect();
     (
         StatusCode::OK,
         Json(json!({
@@ -339,8 +361,9 @@ pub(crate) async fn compat_fs_get(
         Ok(v) => v,
         Err(e) => return compat_err(e, 500),
     };
+    let secret = st.store.sign_secret();
     if entry.is_dir {
-        let mut data = obj_resp_json(&entry);
+        let mut data = obj_resp_json(&entry, &path, &secret);
         data["raw_url"] = json!("");
         data["provider"] = json!("");
         data["related"] = json!([]);
@@ -369,29 +392,30 @@ pub(crate) async fn compat_fs_get(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("http");
 
+    // /p 链接必须带签名（/d、/p 强制校验，见 compat_file）
+    let proxy_url = format!(
+        "{proto}://{host}/p{}?sign={}",
+        path_encode(&path),
+        sign::sign(&path, 0, &secret)
+    );
     let raw_url = if server_proxy {
         // 开启服务器代理：raw_url 指向本服务 /p 路径，所有流量经本机中转
-        format!("{proto}://{host}/p{}", path_encode(&path))
+        proxy_url.clone()
     } else {
         // 关闭服务器代理：从驱动获取真实直链
         // 若驱动要求代理（如 115 直链与 UA 绑定），同样指向本服务 /p 路径
         match st.get_driver(&acc_id).await {
             Ok(driver) => match driver.download(&entry).await {
-                Ok(info) if info.proxy => {
-                    // 驱动要求代理，降级为本服务代理路径
-                    format!("{proto}://{host}/p{}", path_encode(&path))
-                }
-                Ok(info) => info.url,
-                Err(_) => {
-                    // 取直链失败时降级为代理路径
-                    format!("{proto}://{host}/p{}", path_encode(&path))
-                }
+                // 驱动不需要代理 → 直接用网盘直链（该 URL 只发给已鉴权的 API 调用方）
+                Ok(info) if !info.proxy => info.url,
+                // 驱动要求代理，或取直链失败 → 降级为本服务代理路径
+                _ => proxy_url.clone(),
             },
-            Err(_) => format!("{proto}://{host}/p{}", path_encode(&path)),
+            Err(_) => proxy_url.clone(),
         }
     };
 
-    let mut data = obj_resp_json(&entry);
+    let mut data = obj_resp_json(&entry, &path, &secret);
     data["raw_url"] = json!(raw_url);
     data["provider"] = json!("");
     data["related"] = json!([]);
@@ -402,18 +426,57 @@ pub(crate) async fn compat_fs_get(
         .into_response()
 }
 
+/// /d、/p 的查询参数（下载链接签名）
+#[derive(Deserialize)]
+pub(crate) struct SignQuery {
+    #[serde(default)]
+    sign: String,
+}
+
+/// 下载鉴权：链接签名有效 **或** 面板会话有效。
+///
+/// 为什么不能只看会话：播放器/TVBox 播视频时带不了 Authorization 头，官方因此把授权
+/// 放进链接本身（sign 参数）。
+/// 为什么附加会话这条：面板里已登录的用户直接点 /d 链接（不带 sign）不该被拦。
+/// 代价是签名无状态 —— 登出/改密码不会让已发出的签名链接失效（与官方行为一致）。
+fn authorize_download(
+    st: &AppState,
+    headers: &HeaderMap,
+    path: &str,
+    sign_param: &str,
+) -> Result<(), sign::SignError> {
+    let signed = sign::verify(path, sign_param, &st.store.sign_secret());
+    if signed.is_ok() {
+        return Ok(());
+    }
+    if let Some(token) = crate::auth::token_from_headers(headers) {
+        if st.sessions.lock().unwrap().contains(&token) {
+            return Ok(());
+        }
+    }
+    signed
+}
+
 /// GET /d/{*path}（下载，attachment）与 /p/{*path}（代理播放，inline）
 ///
 /// 行为由账号 `server_proxy` 开关决定：
 /// - true  → 本服务中转（原有行为）
 /// - false → 302 跳转真实直链，客户端直接访问网盘服务器
+///
+/// 鉴权：`?sign=` 链接签名（见 src/sign.rs）或有效面板会话，校验放在 `resolve_path` 之前 ——
+/// 否则未登录者可用 404/400 的差异探测路径是否存在，还能借 `resolve_path`
+/// "索引未命中即向上游列举"的行为消耗网盘请求。
 async fn compat_file(
     State(st): State<AppState>,
     Path(raw): Path<String>,
+    Query(q): Query<SignQuery>,
     headers: HeaderMap,
     disp: &'static str,
 ) -> Response {
     let path = normalize_path(&raw);
+    if let Err(e) = authorize_download(&st, &headers, &path, &q.sign) {
+        return (StatusCode::UNAUTHORIZED, e.message().to_string()).into_response();
+    }
     let Ok((acc_id, entry)) = st.resolve_path(&path).await else {
         return (StatusCode::NOT_FOUND, "路径不存在").into_response();
     };
@@ -460,17 +523,19 @@ async fn compat_file(
 pub(crate) async fn compat_down(
     State(st): State<AppState>,
     Path(raw): Path<String>,
+    Query(q): Query<SignQuery>,
     headers: HeaderMap,
 ) -> Response {
-    compat_file(State(st), Path(raw), headers, "attachment").await
+    compat_file(State(st), Path(raw), Query(q), headers, "attachment").await
 }
 
 pub(crate) async fn compat_proxy(
     State(st): State<AppState>,
     Path(raw): Path<String>,
+    Query(q): Query<SignQuery>,
     headers: HeaderMap,
 ) -> Response {
-    compat_file(State(st), Path(raw), headers, "inline").await
+    compat_file(State(st), Path(raw), Query(q), headers, "inline").await
 }
 
 // ============================================================

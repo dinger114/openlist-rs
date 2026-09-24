@@ -4,6 +4,7 @@ mod auth;
 mod compat;
 mod config;
 mod drivers;
+mod sign;
 mod state;
 
 use axum::{
@@ -23,8 +24,8 @@ use std::io::{BufRead, Write};
     about = "OpenList Rust 版 - 多网盘浏览下载"
 )]
 struct Args {
-    /// 监听地址：0.0.0.0 局域网开放，127.0.0.1 仅本机
-    #[arg(short = 'a', long, default_value = "0.0.0.0")]
+    /// 监听地址：默认仅本机（127.0.0.1）；要局域网访问用 0.0.0.0
+    #[arg(short = 'a', long, default_value = "127.0.0.1")]
     addr: String,
 
     /// 监听端口
@@ -113,11 +114,28 @@ async fn main() {
 
     let addr = format!("{}:{}", args.addr, args.port);
     println!("OpenList 运行中: http://{addr}");
+    if !is_loopback(&args.addr) {
+        // /d、/p 是免登录下载端点，靠链接签名保护（见 src/sign.rs）。
+        // 绑到非本机地址等于把已配置的网盘暴露给网络可达者，这里显式提醒。
+        println!(
+            "提醒: 已监听 {addr}（非仅本机），/d、/p 下载端点对网络可达者开放；\
+             请确认面板密码不是默认值，必要时用防火墙/反代限制来源"
+        );
+    }
     println!("数据目录: {}", args.dir);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("监听 {addr} 失败: {e}"));
     axum::serve(listener, app).await.unwrap();
+}
+
+/// 是否仅本机监听（127.0.0.0/8、::1、localhost）
+fn is_loopback(addr: &str) -> bool {
+    matches!(addr, "localhost" | "::1" | "[::1]")
+        || addr
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
 }
 
 fn run_command(cmd: Cmd, dir: &str) {

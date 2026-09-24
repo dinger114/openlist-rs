@@ -18,7 +18,7 @@
 ```
 openlist.exe [OPTIONS] [COMMAND]
 
-  -a, --addr <ADDR>      监听地址，默认 0.0.0.0；仅本机用 127.0.0.1
+  -a, --addr <ADDR>      监听地址，默认 127.0.0.1（仅本机）；要局域网访问用 0.0.0.0
   -p, --port <PORT>      监听端口，默认 5244
   -d, --dir <PATH>       数据目录，默认 data（数据库与加密密钥存放于此）
 
@@ -38,7 +38,7 @@ Commands:
 示例：
 
 ```
-# 首次启动：打印随机密码（默认 0.0.0.0:5244，数据目录 data）
+# 首次启动：打印随机密码（默认 127.0.0.1:5244，数据目录 data）
 openlist-rs.exe
 
 # 局域网开放 + 指定端口和数据目录
@@ -60,7 +60,7 @@ openlist-rs.exe set-password
 
 ## 运行
 
-启动后访问 `http://<addr>:<port>`（默认 http://0.0.0.0:5244，本机用 http://127.0.0.1:5244）。
+启动后访问 `http://<addr>:<port>`（默认 http://127.0.0.1:5244；要让局域网/别的设备访问需显式 `-a 0.0.0.0`，此时启动会打印提醒）。
 
 ## 开发
 
@@ -84,7 +84,9 @@ npm run build   # 产物输出 web/dist/，cargo 编译时嵌入
 | POST `/api/auth/login` | `{username,password,otp_code}` → `data.token` |
 | POST `/api/fs/list` | `{path,page,per_page,...}` + `Authorization: <token>` 头 |
 | POST `/api/fs/get` | 返回 `raw_url`（指向本服务 `/p` 代理） |
-| GET `/d/{*path}` / `/p/{*path}` | 官方同款下载/代理路径，支持 Range |
+| GET `/d/{*path}` / `/p/{*path}` | 官方同款下载/代理路径，支持 Range；**必须带 `?sign=` 链接签名**（或有效面板会话） |
+
+`/d`、`/p` 的签名与官方 `pkg/sign` 逐字一致：`sign = base64url(HMAC-SHA256(密钥, "路径:过期时间")) + ":" + 过期时间`（过期时间 `0` = 不过期），密钥由数据目录的 `openlist.key` 派生。客户端不用自己算 —— `/api/fs/get` 返回的 `raw_url` 已带签名，`data.sign` 字段也可直接用来拼 `/d`、`/p` 链接（目录为空串）。之所以用链接签名而不是鉴权头：播放器/TVBox 播视频时带不了 `Authorization`。
 
 路径规则：根目录 `/` 下列出各账号文件夹（以备注名命名），进入即浏览对应网盘。响应结构与 OpenList 4.2.6 对齐（HTTP 200 + `{code,message,data}`、`type` 枚举 0未知/1文件夹/2视频/3音频、`raw_url` 为绝对地址）。
 

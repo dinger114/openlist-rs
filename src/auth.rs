@@ -44,13 +44,19 @@ pub(crate) async fn auth_guard(
 }
 
 fn extract_token(req: &Request<axum::body::Body>) -> Option<String> {
-    let cookie_token = req
-        .headers()
+    token_from_headers(req.headers())
+}
+
+/// 从请求头取会话 token：面板走 Cookie（olm_token），
+/// OpenList 协议客户端（NovaTV/TVBox）走 Authorization 头。
+/// /d、/p 的下载鉴权复用同一套（见 compat::authorize_download）。
+pub(crate) fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+    let cookie_token = headers
         .get(header::COOKIE)
         .and_then(|c| c.to_str().ok())
         .and_then(|c| parse_cookie_value(c, "olm_token"));
     cookie_token.or_else(|| {
-        req.headers()
+        headers
             .get(header::AUTHORIZATION)
             .and_then(|a| a.to_str().ok())
             .map(|a| a.trim().trim_start_matches("Bearer ").trim().to_string())
