@@ -656,7 +656,8 @@ use rand::RngExt;
 use redb::{Database, ReadableDatabase, TableDefinition};
 
 /// 配置表：单行 "config"，value = nonce(12B) || AES-256-GCM 密文
-const CONFIG_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("config");
+const CONFIG_TABLE_NAME: &str = "config";
+const CONFIG_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new(CONFIG_TABLE_NAME);
 const CONFIG_ROW: &str = "config";
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
@@ -679,8 +680,7 @@ impl Store {
         }
         let key = load_or_create_key(&dir);
         let db_path = dir.join("openlist.redb");
-        let db = Database::create(&db_path)
-            .unwrap_or_else(|e| panic!("无法打开数据库 {}: {e}", db_path.display()));
+        let db = open_store_or_migrate(&db_path);
 
         let raw: Option<Vec<u8>> = (|| {
             let txn = db.begin_read().ok()?;
@@ -748,6 +748,79 @@ impl Store {
 
 fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
     std::io::Error::other(e.to_string())
+}
+
+/// 打开数据库；若是 redb 2 时代的旧格式，先做一次性迁移再打开。
+///
+/// redb 4 移除了升级 API：打开 v2 文件只会返回 `DatabaseError::UpgradeRequired(2)`，
+/// 项目里已经有用户的库是这个格式，直接 panic 等于升级即丢数据。
+fn open_store_or_migrate(db_path: &Path) -> Database {
+    match Database::create(db_path) {
+        Ok(db) => db,
+        Err(redb::DatabaseError::UpgradeRequired(ver)) => {
+            eprintln!(
+                "检测到旧版数据库格式 v{ver}（redb 2 时代），正在迁移到新格式；原文件备份为 {}",
+                db_path.with_extension("redb.v2.bak").display()
+            );
+            migrate_legacy_store(db_path);
+            Database::create(db_path)
+                .unwrap_or_else(|e| panic!("迁移后仍无法打开数据库 {}: {e}", db_path.display()))
+        }
+        Err(e) => panic!("无法打开数据库 {}: {e}", db_path.display()),
+    }
+}
+
+/// 旧库（redb 2 / 文件格式 v2）→ 新库（redb 4 / 格式 v3）一次性迁移。
+///
+/// 全仓库只有一张表 config（单行 "config" = nonce || AES-GCM 密文），所以把这一行原样搬过去
+/// 即可（密文含 nonce，逐字节复制，密钥文件不动）。旧文件不删，改名留底：迁移是单向的，
+/// 迁移后旧二进制再也读不了这个库。
+fn migrate_legacy_store(db_path: &Path) {
+    let tmp_path = db_path.with_extension("redb.new");
+    let _ = std::fs::remove_file(&tmp_path);
+
+    let blob: Option<Vec<u8>> = (|| -> Result<Option<Vec<u8>>, String> {
+        let old = redb2::Database::create(db_path).map_err(|e| e.to_string())?;
+        let txn = old.begin_read().map_err(|e| e.to_string())?;
+        let table = txn
+            .open_table(redb2::TableDefinition::<&str, &[u8]>::new(
+                CONFIG_TABLE_NAME,
+            ))
+            .map_err(|e| e.to_string())?;
+        let guard = table.get(CONFIG_ROW).map_err(|e| e.to_string())?;
+        Ok(guard.map(|v| v.value().to_vec()))
+    })()
+    .unwrap_or_else(|e| panic!("读取旧版数据库 {} 失败: {e}", db_path.display()));
+
+    if blob.is_none() {
+        eprintln!("旧库中没有 config 行，按空配置迁移");
+    }
+
+    let new_db = Database::create(&tmp_path)
+        .unwrap_or_else(|e| panic!("迁移时创建新库 {} 失败: {e}", tmp_path.display()));
+    {
+        let txn = new_db
+            .begin_write()
+            .unwrap_or_else(|e| panic!("迁移事务打开失败: {e}"));
+        {
+            let mut table = txn
+                .open_table(CONFIG_TABLE)
+                .unwrap_or_else(|e| panic!("迁移建表失败: {e}"));
+            if let Some(b) = &blob {
+                table
+                    .insert(CONFIG_ROW, b.as_slice())
+                    .unwrap_or_else(|e| panic!("迁移写入失败: {e}"));
+            }
+        }
+        txn.commit().unwrap_or_else(|e| panic!("迁移提交失败: {e}"));
+    }
+    drop(new_db);
+
+    let bak_path = db_path.with_extension("redb.v2.bak");
+    std::fs::rename(db_path, &bak_path)
+        .unwrap_or_else(|e| panic!("备份旧库到 {} 失败: {e}", bak_path.display()));
+    std::fs::rename(&tmp_path, db_path)
+        .unwrap_or_else(|e| panic!("用迁移后的库替换 {} 失败: {e}", db_path.display()));
 }
 
 fn encrypt(key: &[u8; KEY_LEN], plain: &[u8]) -> Result<Vec<u8>, String> {
@@ -833,6 +906,51 @@ fn import_legacy(dir: &Path) -> Option<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// redb 2（文件格式 v2）→ redb 4（格式 v3）迁移：行字节必须逐字节保留，旧文件留备份。
+    /// 用 redb2 造真实旧格式库，不依赖外部文件。
+    #[test]
+    fn test_legacy_v2_store_migrates_without_data_loss() {
+        let dir = std::env::temp_dir().join(format!("olrs-migrate-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("openlist.redb");
+        let _ = std::fs::remove_file(&path);
+        let payload = b"nonce-and-aes-gcm-ciphertext".to_vec();
+        {
+            let old = redb2::Database::create(&path).unwrap();
+            let txn = old.begin_write().unwrap();
+            {
+                let mut t = txn
+                    .open_table(redb2::TableDefinition::<&str, &[u8]>::new(
+                        CONFIG_TABLE_NAME,
+                    ))
+                    .unwrap();
+                t.insert(CONFIG_ROW, payload.as_slice()).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+        assert!(
+            Database::create(&path).is_err(),
+            "v2 格式库在新版 redb 下应当打不开（UpgradeRequired）"
+        );
+
+        migrate_legacy_store(&path);
+
+        assert!(
+            path.with_extension("redb.v2.bak").exists(),
+            "旧库应留 .v2.bak 备份"
+        );
+        let db = Database::create(&path).unwrap();
+        let txn = db.begin_read().unwrap();
+        let table = txn.open_table(CONFIG_TABLE).unwrap();
+        let got = table.get(CONFIG_ROW).unwrap().map(|v| v.value().to_vec());
+        assert_eq!(
+            got.as_deref(),
+            Some(payload.as_slice()),
+            "迁移后 config 行字节必须完全一致"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn test_encrypt_decrypt_round_trip() {
