@@ -35,6 +35,9 @@ russh = "0.63"
 russh-sftp = "3"
 # 持久化：redb 嵌入式 KV 库（单文件），账号数据 AES-256-GCM 加密后落盘
 redb = "4"
+# 仅用于一次性迁移：redb 4 移除了升级 API（打开旧格式库只报 UpgradeRequired），
+# 所以用 redb 2 读旧格式库、原样写进新建的 redb 4 库。见 config.rs::migrate_legacy_store
+redb2 = { package = "redb", version = "2" }
 aes-gcm = "0.11"
 # AES-ECB：蓝奏云/飞鸡盘接口签名用（AES-128-ECB + PKCS7，手写填充）
 aes = "0.9"
