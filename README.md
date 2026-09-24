@@ -8,7 +8,7 @@
 - 文件浏览：分页拉取、面包屑导航、文件夹/文件列表（大小、修改时间）
 - **视频在线播放**：浏览器内直接播放（后端流式代理，支持 Range 拖动进度）
 - 下载：后端代理流式下载（转发 Range，支持断点续传），文件名正确编码
-- **面板登录鉴权**：用户名密码 + HttpOnly 会话 Cookie（7 天有效）
+- **面板登录鉴权**：用户名密码（argon2id 哈希存储）+ HttpOnly 会话 Cookie（7 天，滑动续期）；登录失败按 IP 限速（连错 5 次锁 60 秒，翻倍上限 15 分钟）
 - 夸克 `__puus` cookie 滚动更新自动回写；123 网盘 401 自动重登；123 列表接口 700ms 限速（对齐 Go 版）
 - **存储启用/禁用**：管理页每张存储卡片附有开关，关闭后该存储从网盘列表隐藏，不影响配置数据
 - **多存储驱动**：夸克 / UC / 夸克Open / 夸克TV / UC TV、123网盘 / 123Open / 123Link、阿里云盘（旧）/ 阿里云盘Open / 阿里分享、115网盘 / 115Open / 115分享、百度网盘、天翼云盘、移动云盘、迅雷、蓝奏云、蓝奏云优创 / 飞鸡盘、Terabox、OneDrive / OneDrive分享 / OneDriveAPP、Google Drive / Google Photo、Dropbox、PikPak / PikPak分享、Yandex.Disk、S3 / BunnyCDN、SFTP、FTP、SMB、WebDAV、AList v3、OpenList 挂载 / OpenList 分享、Seafile、可道云 KodBox、Cloudreve V4、虚拟存储（测试）等
@@ -32,6 +32,7 @@ Commands:
 
 - **首次启动**：自动初始化为 `admin` + 随机 8 位密码，密码打印到终端并写入数据库
 - **之后启动**：直接读取数据库中的账号密码，不再生成、不再打印
+- **密码以 argon2id 哈希存储**（`$argon2id$…`，官方默认参数 m=19MiB/t=2/p=1）：即使库文件与 `openlist.key` 同时泄漏，也拿不到明文密码。老版本留在线库里的**明文**密码会在启动时自动升级为哈希 —— 密码本身不变，用户不用重设
 - 忘记密码时用 `reset-user` 重置（admin + 新随机密码），或用 `set-account` / `set-password` 交互式修改
 - 面板「设置」页也可在线修改账号和密码（保存后所有会话失效，需重新登录）
 
@@ -56,7 +57,7 @@ openlist-rs.exe set-password
 - 加密密钥为首次启动自动生成的随机 32 字节，存于 `<数据目录>/openlist.key`（Unix 下权限 0600）
   - **密钥与数据库需一起保管**：只拷贝数据库、丢失密钥文件或两者不配套时，数据无法解密（启动会明确报错）
 - 从旧的 JSON 版升级：把原来的 `config.json` 放进数据目录即可，首次启动自动导入（原文件保留，确认后手动删除）
-- 会话保存在内存中，重启服务后需重新登录
+- 会话保存在内存中，重启服务后需重新登录；会话 7 天不用即失效（每次使用滑动续期），后台每 10 分钟清扫过期会话
 
 ## 运行
 
@@ -97,7 +98,7 @@ NovaTV 接入：设置里添加 OpenList → 服务器地址填本服务地址 �
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/auth/status` | 查询是否启用鉴权（鉴权始终启用） |
-| POST | `/api/login` | 面板登录 `{username, password}`，成功设置会话 Cookie |
+| POST | `/api/login` | 面板登录 `{username, password}`，成功设置会话 Cookie；失败次数过多返回 429 + Retry-After |
 | POST | `/api/logout` | 退出登录 |
 | GET | `/api/web/user` | 当前面板登录用户名（设置页回填） |
 | POST | `/api/web/settings` | 修改面板用户名/密码 `{username?, password?}`，成功后清空全部会话 |

@@ -84,8 +84,8 @@ fn now_unix() -> i64 {
 }
 
 /// 定长比较：签名是攻击者可控输入，避免按字节短路比较泄漏时序
-/// （Go 版是字符串直接比较，这里严格更严）
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// （Go 版是字符串直接比较，这里严格更严）。密码明文比较也用这个（见 password.rs）。
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

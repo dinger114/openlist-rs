@@ -41,6 +41,9 @@ redb2 = { package = "redb", version = "2" }
 aes-gcm = "0.11"
 # AES-ECB：蓝奏云/飞鸡盘接口签名用（AES-128-ECB + PKCS7，手写填充）
 aes = "0.9"
+# 面板密码哈希：argon2id（PHC 串落库）。已在依赖树里（russh → ssh-key 带进来），
+# 提成直接依赖不引入新下载；参数与并发约束见 src/password.rs
+argon2 = "0.6"
 
 [profile.release]
 strip = "symbols"

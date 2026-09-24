@@ -4,7 +4,7 @@ use crate::drivers::PutInput;
 use crate::sign;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
@@ -13,9 +13,11 @@ use futures_util::TryStreamExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::Error as IoError;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_util::io::StreamReader;
 
 /// 把流式 body 的错误统一转成 io::Error（StreamReader 的 bound 要求）
@@ -260,19 +262,29 @@ pub(crate) struct CompatLoginReq {
 }
 
 /// POST /api/auth/login —— 对齐 OpenList 登录响应
+///
+/// 与面板登录共用凭据校验（argon2 + 老库透明升级）与登录失败限速。
+/// 限速命中按协议约定回 HTTP 200 + code 429（AList 客户端会把 message 显示出来）。
 pub(crate) async fn compat_login(
     State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(req): Json<CompatLoginReq>,
 ) -> Response {
-    let valid = {
-        let auth = st.auth.read().unwrap();
-        req.username == auth.user && req.password == auth.pass
-    };
-    if !valid {
+    let ip = peer.ip();
+    let now = Instant::now();
+    if let Err(wait) = st.login_limiter.lock().unwrap().check(ip, now) {
+        return compat_err(
+            format!("登录失败次数过多，请 {} 秒后再试", wait.as_secs().max(1)),
+            429,
+        );
+    }
+    if !crate::auth::verify_credentials(&st, &req.username, &req.password).await {
+        st.login_limiter.lock().unwrap().record_failure(ip, now);
         return compat_err("用户名或密码错误", 400);
     }
+    st.login_limiter.lock().unwrap().record_success(ip);
     let token = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().simple().to_string();
-    st.sessions.lock().unwrap().insert(token.clone());
+    st.issue_session(token.clone());
     (
         StatusCode::OK,
         Json(json!({ "code": 200, "message": "success", "data": { "token": token } })),
@@ -450,7 +462,8 @@ fn authorize_download(
         return Ok(());
     }
     if let Some(token) = crate::auth::token_from_headers(headers) {
-        if st.sessions.lock().unwrap().contains(&token) {
+        // 会话带 TTL 与滑动续期（见 state::SESSION_TTL）
+        if st.session_valid(&token) {
             return Ok(());
         }
     }

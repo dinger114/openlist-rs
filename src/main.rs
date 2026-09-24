@@ -4,6 +4,8 @@ mod auth;
 mod compat;
 mod config;
 mod drivers;
+mod password;
+mod ratelimit;
 mod sign;
 mod state;
 
@@ -61,6 +63,22 @@ async fn main() {
     }
 
     let state = AppState::new(&args.dir);
+
+    // 会话定期清扫：校验路径上是惰性过期（session_valid），这里做后台兜底，
+    // 顺带解决「每次登录都往会话表塞一条、永不回收」的内存增长。
+    {
+        let st = state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tick.tick().await;
+                let n = st.sweep_sessions();
+                if n > 0 {
+                    println!("已清扫 {n} 个过期会话");
+                }
+            }
+        });
+    }
 
     let app = Router::new()
         // 自有面板 API
@@ -126,7 +144,14 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("监听 {addr} 失败: {e}"));
-    axum::serve(listener, app).await.unwrap();
+    // 用带 ConnectInfo 的版本：登录限速需要真实 TCP 对端 IP（X-Forwarded-For 是
+    // 客户端可控的头，拿它当限速键等于让攻击者伪造头绕过限速）
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 /// 是否仅本机监听（127.0.0.0/8、::1、localhost）

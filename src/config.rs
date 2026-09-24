@@ -734,12 +734,21 @@ impl Store {
         }
     }
 
-    /// 更新面板登录账号/密码（None 表示保持该项不变），加密持久化到数据库
+    /// 更新面板登录账号/密码（None 表示保持该项不变），加密持久化到数据库。
+    ///
+    /// 密码一律以 argon2id 的 PHC 串落库：入参是明文时先哈希，已是哈希串则原样保留
+    /// （幂等）—— 收口在这里，CLI 与面板 API 都不可能把明文写回库。
     pub fn update_web_auth(
         &self,
         user: Option<String>,
         pass: Option<String>,
     ) -> std::io::Result<()> {
+        let pass = match pass {
+            Some(p) if !p.is_empty() && !crate::password::is_hashed(&p) => {
+                Some(crate::password::hash_password(&p).map_err(io_err)?)
+            }
+            other => other,
+        };
         let mut data = self.data.lock().unwrap();
         if user.is_some() {
             data.web_user = user;
