@@ -52,6 +52,20 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
+          # 0.x 的 minor 跳级在 Cargo 语义下是破坏性变更（例：russh 0.45 → 0.62 改了 API），
+          # 但按 SemVer 两者 major 都是 0、只算 minor，fetch-metadata 会判成 semver-minor。
+          # 单依赖 PR 能拿到前后版本号，这时按 Cargo 语义把它当 major：只评论、不合并。
+          # （分组 PR 的 previous/new-version 为空，拿不到逐依赖版本，只能靠 CI 兜底）
+          PREV='${{ steps.meta.outputs.previous-version }}'
+          NEW='${{ steps.meta.outputs.new-version }}'
+          if [ -n "$PREV" ] && [ -n "$NEW" ]; then
+            pmaj=${PREV%%.*}; pmin=${PREV#*.}; pmin=${pmin%%.*}
+            nmaj=${NEW%%.*};  nmin=${NEW#*.};  nmin=${nmin%%.*}
+            if [ "$pmaj" = "0" ] && [ "$nmaj" = "0" ] && [ "$pmin" != "$nmin" ]; then
+              gh pr comment "$PR_URL" --body "⚠️ \`$PREV → $NEW\` 是 0.x 的 minor 跳级，按 Cargo 语义属于破坏性变更，不自动合并，请人工确认。"
+              exit 0
+            fi
+          fi
           # 本工作流自己也在 PR 上留下一个 check。它的状态永远是「进行中」（干活的正是它），
           # 不排除掉就会死等到超时 —— 必须按 workflow 名过滤。
           SELF='dependabot-automerge'
