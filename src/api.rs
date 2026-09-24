@@ -1354,21 +1354,14 @@ pub(crate) async fn add_account(
                     "哈拉云需要 client_secret".to_string(),
                 ))?
                 .to_string();
+            // meta.go 只要求 client_id / client_secret；个人 API 方式不需要令牌
+            // （无令牌时按空 access_token 参与签名，与 Go 版 halalCommon.GetAccessToken 返回空串一致）
             let refresh_token = req
                 .refresh_token
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
-            // personal API 模式下可以只给 access_token；两者都空则任何接口都调不动
-            if refresh_token.is_none()
-                && req.access_token.as_deref().unwrap_or("").trim().is_empty()
-            {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "哈拉云需要 refresh_token（或一个有效的 access_token）".to_string(),
-                ));
-            }
             (
                 "halalcloud_open",
                 Credential::HalalcloudOpen {
@@ -3516,21 +3509,14 @@ pub(crate) async fn edit_account(
                     "哈拉云需要 client_secret".to_string(),
                 ))?
                 .to_string();
+            // meta.go 只要求 client_id / client_secret；个人 API 方式不需要令牌
+            // （无令牌时按空 access_token 参与签名，与 Go 版 halalCommon.GetAccessToken 返回空串一致）
             let refresh_token = req
                 .refresh_token
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
-            // personal API 模式下可以只给 access_token；两者都空则任何接口都调不动
-            if refresh_token.is_none()
-                && req.access_token.as_deref().unwrap_or("").trim().is_empty()
-            {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    "哈拉云需要 refresh_token（或一个有效的 access_token）".to_string(),
-                ));
-            }
             (
                 "halalcloud_open",
                 Credential::HalalcloudOpen {

@@ -755,9 +755,9 @@
               <input class="input" v-model="form.client_id" placeholder="哈拉云开发者 client_id" /></label>
             <label class="field"><span>Client Secret</span>
               <input class="input" v-model="form.client_secret" type="password" /></label>
-            <label class="field"><span>Refresh Token</span>
-              <textarea class="input" v-model="form.refresh_token" placeholder="推荐：过期自动刷新并回写"></textarea></label>
-            <label class="field"><span>Access Token（可选，刷新后自动写回）</span>
+            <label class="field"><span>Refresh Token（可选，个人 API 方式不需要）</span>
+              <textarea class="input" v-model="form.refresh_token" placeholder="留空即可；填了则过期时自动刷新并回写"></textarea></label>
+            <label class="field"><span>Access Token（可选，一般不用填）</span>
               <textarea class="input" v-model="form.access_token"></textarea></label>
             <label class="field"><span>API Host（可选）</span>
               <input class="input" v-model="form.host" placeholder="openapi.2dland.cn" /></label>

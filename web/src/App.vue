@@ -241,7 +241,8 @@ const DRIVER_LABELS = {
   kodbox: '可道云',
   cloudreve_v4: 'Cloudreve',
   terabox: 'Terabox',
-  ilanzou: '蓝奏优'
+  ilanzou: '蓝奏优',
+  halalcloud_open: '哈拉云'
 }
 
 // 鉴权
@@ -558,6 +559,15 @@ async function addAccount(form) {
       payload.username = form.username
       payload.password = form.password
       payload.root_folder_id = form.root_folder_id || '0'
+    } else if (d === 'halalcloud_open') {
+      // 只有 client_id / client_secret 是必填；令牌留空即个人 API 方式
+      payload.client_id = form.client_id
+      payload.client_secret = form.client_secret
+      payload.access_token = form.access_token || undefined
+      payload.refresh_token = form.refresh_token || undefined
+      payload.host = form.host || undefined
+      payload.timeout = form.timeout || undefined
+      payload.root_path = form.root_path || '/'
     }
 
     await api('/api/accounts', {
@@ -784,6 +794,15 @@ async function editAccount(form) {
       payload.username = form.username
       payload.password = form.password
       payload.root_folder_id = form.root_folder_id || '0'
+    } else if (d === 'halalcloud_open') {
+      // 只有 client_id / client_secret 是必填；令牌留空即个人 API 方式
+      payload.client_id = form.client_id
+      payload.client_secret = form.client_secret
+      payload.access_token = form.access_token || undefined
+      payload.refresh_token = form.refresh_token || undefined
+      payload.host = form.host || undefined
+      payload.timeout = form.timeout || undefined
+      payload.root_path = form.root_path || '/'
     }
 
     await api(`/api/accounts/${form.id}`, {

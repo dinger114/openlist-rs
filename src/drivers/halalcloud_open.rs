@@ -546,7 +546,9 @@ fn entry_from_json(f: &Value, parent: &str) -> Option<Entry> {
             format!("{parent}/{name}")
         };
     }
-    let fid = if identity.is_empty() {
+    // 目录的 fid 必须是 path：open API 的 list 按 parent.path 查找（Go 版用 dir.GetPath()），
+    // identity 在 extra 里随条目带走，写操作仍能用上；文件用 identity 便于取直链
+    let fid = if is_dir || identity.is_empty() {
         path.clone()
     } else {
         identity.clone()
@@ -798,5 +800,11 @@ mod tests {
 
         // 无 name 直接丢弃
         assert!(entry_from_json(&json!({ "identity": "x" }), "/").is_none());
+
+        // 目录即使有 identity，fid 也必须是 path（list 按 parent.path 查找）
+        let d = json!({ "identity": "dir-id", "name": "sub", "path": "/sub", "dir": true, "size": "0" });
+        let e = entry_from_json(&d, "/").unwrap();
+        assert_eq!(e.fid, "/sub");
+        assert_eq!(e.extra.as_ref().unwrap().get("id").unwrap(), "dir-id");
     }
 }
