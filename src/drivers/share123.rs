@@ -415,8 +415,8 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
 /// 作为单个 query 参数 timeSign=<k> 挂到 URL 上（k 由本函数直接返回完整值）
 fn sign_path(path: &str, os: &str, version: &str) -> String {
     const TABLE: &[u8; 26] = b"adefghlmyijnopkqrstubcvwsz";
-    use rand::Rng;
-    let random: i64 = (1e7 * rand::thread_rng().gen::<f64>()).round() as i64;
+    use rand::RngExt;
+    let random: i64 = (1e7 * rand::rng().random::<f64>()).round() as i64;
     // 东八区当前时间：unix 秒 + 8h
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

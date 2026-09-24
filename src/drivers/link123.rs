@@ -10,7 +10,7 @@
 use super::DownloadInfo;
 use crate::config::Entry;
 use md5::{Digest, Md5};
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
@@ -379,11 +379,11 @@ fn sign_url(origin: &str, private_key: &str, uid: u64, valid_min: i64) -> Result
     }
     let mut u = url::Url::parse(origin).map_err(|e| format!("URL 解析失败: {e}"))?;
     let ts = chrono_now_unix() + valid_min * 60;
-    let r_int: i64 = rand::thread_rng().gen::<i64>().abs();
+    let r_int: i64 = rand::rng().random::<i64>().abs();
     let path = u.path();
     let raw = format!("{path}-{ts}-{r_int}-{uid}-{private_key}");
     let digest = Md5::digest(raw.as_bytes());
-    let auth_key = format!("{ts}-{r_int}-{uid}-{digest:x}");
+    let auth_key = format!("{ts}-{r_int}-{uid}-{}", hex::encode(digest));
     u.query_pairs_mut().append_pair("auth_key", &auth_key);
     Ok(u.to_string())
 }
