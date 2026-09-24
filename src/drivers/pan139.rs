@@ -14,7 +14,7 @@ use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use base64::Engine;
 use md5::{Digest, Md5};
-use rand::Rng;
+use rand::RngExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -160,9 +160,9 @@ fn cal_sign(body: &str, ts: &str, rand_str: &str) -> String {
 
 fn rand_string(n: usize) -> String {
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..n)
-        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len()) as usize] as char)
+        .map(|_| CHARSET[rng.random_range(0..CHARSET.len()) as usize] as char)
         .collect()
 }
 

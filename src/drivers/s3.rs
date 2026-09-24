@@ -7,7 +7,7 @@
 
 use super::{DownloadInfo, PutInput};
 use crate::config::Entry;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};

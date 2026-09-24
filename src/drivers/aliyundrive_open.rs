@@ -711,7 +711,7 @@ fn proof_range(input: &str, size: u64) -> Result<(u64, u64), String> {
     if size == 0 {
         return Ok((0, 0));
     }
-    let md5hex = format!("{:x}", md5::Md5::digest(input.as_bytes()));
+    let md5hex = hex::encode(md5::Md5::digest(input.as_bytes()));
     let tmp_int =
         u64::from_str_radix(&md5hex[0..16], 16).map_err(|e| format!("计算 proof 区间失败: {e}"))?;
     let index = tmp_int % size;

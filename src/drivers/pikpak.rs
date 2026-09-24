@@ -8,7 +8,7 @@
 use super::{DownloadInfo, PutInput};
 use crate::config::{Credential, Entry, Store};
 use base64::Engine;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha1::{Digest, Sha1};

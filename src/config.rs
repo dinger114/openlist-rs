@@ -652,8 +652,8 @@ pub struct Entry {
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use rand::RngCore;
-use redb::{Database, TableDefinition};
+use rand::RngExt;
+use redb::{Database, ReadableDatabase, TableDefinition};
 
 /// 配置表：单行 "config"，value = nonce(12B) || AES-256-GCM 密文
 const CONFIG_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("config");
@@ -753,9 +753,11 @@ fn io_err<E: std::fmt::Display>(e: E) -> std::io::Error {
 fn encrypt(key: &[u8; KEY_LEN], plain: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(key.into());
     let mut nonce = [0u8; NONCE_LEN];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    rand::rng().fill(&mut nonce);
+    // aead 0.6 / hybrid-array 0.4：Nonce::from_slice 已弃用，改走 From/TryFrom
+    let nonce_ref: &Nonce<_> = (&nonce).into();
     let ct = cipher
-        .encrypt(Nonce::from_slice(&nonce), plain)
+        .encrypt(nonce_ref, plain)
         .map_err(|_| "加密失败".to_string())?;
     let mut blob = nonce.to_vec();
     blob.extend_from_slice(&ct);
@@ -768,8 +770,11 @@ fn decrypt(key: &[u8; KEY_LEN], blob: &[u8]) -> Result<Vec<u8>, String> {
     }
     let (nonce, ct) = blob.split_at(NONCE_LEN);
     let cipher = Aes256Gcm::new(key.into());
+    let nonce_ref: &Nonce<_> = nonce
+        .try_into()
+        .map_err(|_| format!("nonce 长度不是 {NONCE_LEN} 字节"))?;
     cipher
-        .decrypt(Nonce::from_slice(nonce), ct)
+        .decrypt(nonce_ref, ct)
         .map_err(|_| "解密失败".to_string())
 }
 
@@ -786,7 +791,7 @@ fn load_or_create_key(dir: &Path) -> [u8; KEY_LEN] {
             .unwrap_or_else(|_| panic!("密钥文件 {} 长度错误（需 64 位 hex 字符）", path.display()))
     } else {
         let mut key = [0u8; KEY_LEN];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill(&mut key);
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create_new(true);
         #[cfg(unix)]

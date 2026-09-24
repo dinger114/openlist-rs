@@ -21,7 +21,7 @@ use super::DownloadInfo;
 use crate::config::Entry;
 use base64::Engine;
 use num_bigint::BigUint;
-use rand::Rng;
+use rand::RngExt;
 use reqwest::{Client, Method};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -1157,7 +1157,7 @@ struct EcdhCipher {
 
 impl EcdhCipher {
     fn new() -> Result<EcdhCipher, String> {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let n = p224_n();
         // 私钥 d ∈ [1, n-1]
         let mut bytes = [0u8; 28];
@@ -1231,9 +1231,9 @@ impl EcdhCipher {
 
     /// 对齐 EncodeToken(timestamp)：pubKey 混淆 + crc 校验 + base64
     fn encode_token(&self, ts_millis: i64) -> String {
-        let mut rng = rand::thread_rng();
-        let r1: u8 = rng.gen_range(0..=255);
-        let r2: u8 = rng.gen_range(0..=255);
+        let mut rng = rand::rng();
+        let r1: u8 = rng.random_range(0..=255);
+        let r2: u8 = rng.random_range(0..=255);
         let mut tmp: Vec<u8> = Vec::with_capacity(74);
         for i in 0..15 {
             tmp.push(self.pub_key[i] ^ r1);

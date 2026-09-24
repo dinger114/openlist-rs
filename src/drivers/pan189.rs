@@ -14,7 +14,7 @@ use super::DownloadInfo;
 use crate::config::Entry;
 use base64::Engine;
 use md5::{Digest, Md5};
-use rand::Rng;
+use rand::RngExt;
 use reqwest::redirect::Policy;
 use reqwest::{Client, Method};
 use rsa::pkcs8::DecodePublicKey;
@@ -70,7 +70,7 @@ use super::timeutil::days_from_civil;
 
 /// 对齐 Go random()："0." + 17 位宽的随机数
 fn random_param() -> String {
-    let n: u64 = rand::thread_rng().gen_range(0..100_000_000_000_000_000);
+    let n: u64 = rand::rng().random_range(0..100_000_000_000_000_000);
     format!("0.{n:>17}")
 }
 
@@ -127,7 +127,7 @@ fn rsa_encrypt_hex(data: &[u8], j_rsakey: &str) -> Result<String, String> {
     );
     let pub_key = RsaPublicKey::from_public_key_pem(&pem_str)
         .map_err(|e| format!("189 公钥解析失败: {e}"))?;
-    let mut rng = rand::thread_rng();
+    let mut rng = rsa::rand_core::OsRng;
     let encrypted = pub_key
         .encrypt(&mut rng, Pkcs1v15Encrypt, data)
         .map_err(|e| format!("189 RSA 加密失败: {e}"))?;
@@ -746,7 +746,7 @@ impl Cloud189 {
         let r = random_by_pattern("xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx");
         let mut l = random_by_pattern("xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx");
         // 对齐 Go：l 截断为 16 + int(16*rand) 长度（16~31 字符）
-        let cut = 16 + (rand::thread_rng().gen::<f32>() * 16.0) as usize;
+        let cut = 16 + (rand::rng().random::<f32>() * 16.0) as usize;
         let cut = cut.min(l.len());
         l.truncate(cut);
         if l.len() < 16 {
@@ -937,12 +937,12 @@ fn now_ms() -> i64 {
 
 /// 对齐 Go Random(pattern)：把 pattern 中每个 x/y 替换为随机 hex 位（y 恒为 8~b）
 fn random_by_pattern(pattern: &str) -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     pattern
         .chars()
         .map(|ch| {
             if ch == 'x' || ch == 'y' {
-                let t = (rng.gen::<f32>() * 16.0) as i64;
+                let t = (rng.random::<f32>() * 16.0) as i64;
                 let i = if ch == 'x' { t } else { 3 & t | 8 };
                 format!("{i:x}")
             } else {
@@ -1031,7 +1031,7 @@ fn rsa_encrypt_b64(data: &[u8], j_rsakey: &str) -> Result<String, String> {
     let pub_key = RsaPublicKey::from_public_key_pem(&pem_str)
         .map_err(|e| format!("189 上传公钥解析失败: {e}"))?;
     let encrypted = pub_key
-        .encrypt(&mut rand::thread_rng(), Pkcs1v15Encrypt, data)
+        .encrypt(&mut rsa::rand_core::OsRng, Pkcs1v15Encrypt, data)
         .map_err(|e| format!("189 上传 RSA 加密失败: {e}"))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&encrypted))
 }

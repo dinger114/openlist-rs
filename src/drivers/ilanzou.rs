@@ -9,7 +9,7 @@
 
 use super::{DownloadInfo, PutInput};
 use crate::config::{Entry, Store};
-use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+use aes::cipher::{Block, BlockCipherEncrypt, KeyInit};
 use aes::Aes128;
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
@@ -169,12 +169,14 @@ impl Ilanzou {
 
     /// AES-128-ECB + PKCS7 加密，返回 hex（对齐 Go 版 mopan.AesEncrypt + hex）
     fn aes_encrypt_hex(plain: &[u8], key: &[u8; 16]) -> String {
-        let cipher = Aes128::new(GenericArray::from_slice(key));
+        // cipher 0.5：密钥走 KeyInit::new_from_slice，分块用 Block（hybrid-array，不再用 GenericArray）
+        let cipher = Aes128::new_from_slice(key).expect("AES-128 密钥固定 16 字节");
         let pad = 16 - (plain.len() % 16);
         let mut buf = plain.to_vec();
         buf.extend(std::iter::repeat_n(pad as u8, pad));
         for chunk in buf.chunks_mut(16) {
-            cipher.encrypt_block(GenericArray::from_mut_slice(chunk));
+            let block: &mut Block<Aes128> = chunk.try_into().expect("每块 16 字节");
+            cipher.encrypt_block(block);
         }
         hex::encode(buf)
     }

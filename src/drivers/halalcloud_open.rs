@@ -20,7 +20,7 @@
 use super::timeutil::civil_from_days;
 use super::{truncate_bytes, DownloadInfo, PutInput};
 use crate::config::{Credential, Entry, Store};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
