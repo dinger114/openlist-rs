@@ -20,13 +20,14 @@ pub struct Sftp {
 
 struct Handler;
 
-#[async_trait::async_trait]
+// russh 0.63：Handler 的 check_server_key 改用原生 async fn（trait 里声明的是
+// -> impl Future + Send），不再需要 #[async_trait]；参数类型是 PublicKeyOrCertificate
 impl russh::client::Handler for Handler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::key::PublicKey,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }
@@ -93,17 +94,20 @@ impl Sftp {
             .await
             .map_err(|e| format!("SSH 连接失败 {}: {e}", self.address))?;
 
-        // russh 0.45: authenticate_* 返回 Result<bool, Error>（无 .success()）
+        // russh 0.63: authenticate_* 返回 AuthResult，用 .success() 取布尔
         let auth_ok = if !self.private_key.trim().is_empty() {
             let key_data = self.private_key.clone();
             let key = if self.passphrase.is_empty() {
-                russh_keys::decode_secret_key(&key_data, None)
+                russh::keys::decode_secret_key(&key_data, None)
             } else {
-                russh_keys::decode_secret_key(&key_data, Some(&self.passphrase))
+                russh::keys::decode_secret_key(&key_data, Some(&self.passphrase))
             }
             .map_err(|e| format!("解析私钥失败: {e}"))?;
             session
-                .authenticate_publickey(&self.username, Arc::new(key))
+                .authenticate_publickey(
+                    &self.username,
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                )
                 .await
                 .map_err(|e| format!("公钥认证失败: {e}"))?
         } else {
@@ -112,7 +116,7 @@ impl Sftp {
                 .await
                 .map_err(|e| format!("密码认证失败: {e}"))?
         };
-        if !auth_ok {
+        if !auth_ok.success() {
             return Err("SFTP 认证失败（用户名/密码/私钥）".into());
         }
 
