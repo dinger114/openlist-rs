@@ -31,7 +31,7 @@ hmac = "0.12"
 sha2 = "0.10"
 async-trait = "0.1"
 # SSH/SFTP：russh 0.45 无 ring feature；Host key 类型来自 ssh-key
-russh = "0.45"
+russh = "0.62"
 russh-sftp = "2.0"
 russh-keys = "0.45"
 ssh-key = { version = "0.6", default-features = false, features = ["alloc"] }
