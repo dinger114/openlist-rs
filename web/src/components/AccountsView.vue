@@ -767,6 +767,144 @@
               <input class="input" v-model="form.root_path" placeholder="/" /></label>
           </template>
 
+          <template v-else-if="form.driver === 'openlist'">
+            <label class="field"><span>站点 URL</span>
+              <input class="input" v-model="form.url" placeholder="https://openlist.example.com" /></label>
+            <label class="field"><span>元信息密码（可选）</span>
+              <input class="input" v-model="form.meta_password" placeholder="目录加密密码" /></label>
+            <label class="field"><span>用户名（可选）</span>
+              <input class="input" v-model="form.username" placeholder="留空则使用 Token" /></label>
+            <label class="field"><span>密码（可选）</span>
+              <input class="input" type="password" v-model="form.password" /></label>
+            <label class="field"><span>Token（可选）</span>
+              <input class="input" v-model="form.token" placeholder="已有 Token 可直接填" /></label>
+            <p class="hint-text">挂载另一套 OpenList：优先用 Token，否则用用户名密码登录换取。</p>
+          </template>
+
+          <template v-else-if="form.driver === 'openlist_share'">
+            <label class="field"><span>站点 URL</span>
+              <input class="input" v-model="form.url" placeholder="https://openlist.example.com" /></label>
+            <label class="field"><span>分享 ID</span>
+              <input class="input" v-model="form.share_id" placeholder="分享链接 /s/xxxx 里的 xxxx" /></label>
+            <label class="field"><span>分享密码（可选）</span>
+              <input class="input" v-model="form.share_pwd" /></label>
+            <p class="hint-text">挂载别人的 OpenList 分享链接，只读。</p>
+          </template>
+
+          <template v-else-if="form.driver === 'seafile'">
+            <label class="field"><span>地址</span>
+              <input class="input" v-model="form.address" placeholder="https://seafile.example.com" /></label>
+            <label class="field"><span>用户名（可选）</span>
+              <input class="input" v-model="form.username" /></label>
+            <label class="field"><span>密码（可选）</span>
+              <input class="input" type="password" v-model="form.password" /></label>
+            <label class="field"><span>Token（可选）</span>
+              <input class="input" v-model="form.token" placeholder="与账号密码二选一" /></label>
+            <label class="field"><span>资料库 ID（可选）</span>
+              <input class="input" v-model="form.repo_id" placeholder="留空则根目录列出资料库" /></label>
+            <label class="field"><span>资料库密码（可选）</span>
+              <input class="input" type="password" v-model="form.repo_pwd" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="/" /></label>
+          </template>
+
+          <template v-else-if="form.driver === 'kodbox'">
+            <label class="field"><span>地址</span>
+              <input class="input" v-model="form.address" placeholder="https://kodbox.example.com" /></label>
+            <label class="field"><span>用户名</span>
+              <input class="input" v-model="form.username" /></label>
+            <label class="field"><span>密码</span>
+              <input class="input" type="password" v-model="form.password" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="留空为网盘根目录" /></label>
+            <p class="hint-text">可道云 KodBox：用账号密码登录换取 accessToken。</p>
+          </template>
+
+          <template v-else-if="form.driver === 'cloudreve_v4'">
+            <label class="field"><span>地址</span>
+              <input class="input" v-model="form.address" placeholder="https://cloudreve.example.com" /></label>
+            <label class="field"><span>用户名（可选）</span>
+              <input class="input" v-model="form.username" /></label>
+            <label class="field"><span>密码（可选）</span>
+              <input class="input" type="password" v-model="form.password" /></label>
+            <label class="field"><span>Access Token（可选）</span>
+              <input class="input" v-model="form.access_token" placeholder="已有令牌可直接填" /></label>
+            <label class="field"><span>Refresh Token（可选）</span>
+              <input class="input" v-model="form.refresh_token" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="/" /></label>
+            <p class="hint-text">Cloudreve V4：账号密码登录，或直接填 access / refresh token。</p>
+          </template>
+
+          <template v-else-if="form.driver === 'yandex_disk'">
+            <label class="field"><span>Refresh Token</span>
+              <input class="input" v-model="form.refresh_token" /></label>
+            <label class="field row">
+              <input type="checkbox" v-model="form.use_online_api" />
+              <span>使用在线刷新 API（推荐）</span>
+            </label>
+            <label class="field"><span>Access Token（可选）</span>
+              <input class="input" v-model="form.access_token" /></label>
+            <label class="field"><span>在线 API 地址（可选）</span>
+              <input class="input" v-model="form.api_address" placeholder="留空用内置 olist 地址" /></label>
+            <label class="field"><span>Client ID（关闭在线刷新时需要）</span>
+              <input class="input" v-model="form.client_id" /></label>
+            <label class="field"><span>Client Secret</span>
+              <input class="input" type="password" v-model="form.client_secret" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="disk:/" /></label>
+          </template>
+
+          <template v-else-if="form.driver === 'terabox'">
+            <label class="field"><span>Cookie</span>
+              <textarea class="input" v-model="form.cookie" placeholder="浏览器登录 terabox.com 后复制完整 Cookie"></textarea></label>
+            <label class="field"><span>下载方式</span>
+              <select class="input" v-model="form.download_api">
+                <option value="official">official（官方 dlink）</option>
+                <option value="crack">crack（filemetas 直链）</option>
+              </select></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="/" /></label>
+          </template>
+
+          <template v-else-if="form.driver === 'ilanzou'">
+            <label class="field"><span>站点</span>
+              <select class="input" v-model="form.site">
+                <option value="ilanzou">蓝奏云优创（ilanzou.com）</option>
+                <option value="feijipan">飞鸡盘（feijipan.com）</option>
+              </select></label>
+            <label class="field"><span>账号</span>
+              <input class="input" v-model="form.username" /></label>
+            <label class="field"><span>密码</span>
+              <input class="input" type="password" v-model="form.password" /></label>
+            <label class="field"><span>根文件夹 ID（可选）</span>
+              <input class="input" v-model="form.root_folder_id" placeholder="默认 0（根目录）" /></label>
+          </template>
+
+          <template v-else-if="form.driver === 'bunny'">
+            <label class="field"><span>Bucket</span>
+              <input class="input" v-model="form.bucket" placeholder="bucket-name" /></label>
+            <label class="field"><span>Access Key ID</span>
+              <input class="input" v-model="form.access_key_id" /></label>
+            <label class="field"><span>Secret Access Key</span>
+              <input class="input" type="password" v-model="form.secret_access_key" /></label>
+            <label class="field"><span>Endpoint（可选）</span>
+              <input class="input" v-model="form.endpoint" placeholder="https://s3.bunnycdn.com" /></label>
+            <label class="field"><span>Region（可选）</span>
+              <input class="input" v-model="form.region" placeholder="us-east-1" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="/" /></label>
+            <p class="hint-text">BunnyCDN 对象存储（S3 兼容），Region 留空默认 us-east-1。</p>
+          </template>
+
+          <template v-else-if="form.driver === 'virtual'">
+            <label class="field"><span>文件数量</span>
+              <input class="input" type="number" v-model.number="form.num_file" placeholder="5" /></label>
+            <label class="field"><span>文件夹数量</span>
+              <input class="input" type="number" v-model.number="form.num_folder" placeholder="0" /></label>
+            <p class="hint-text">虚拟存储（测试用）：按数量生成假文件 / 假文件夹，不占空间。</p>
+          </template>
+
 
 
 <div class="modal-actions">
