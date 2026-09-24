@@ -14,30 +14,30 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 uuid = { version = "1", features = ["v4"] }
-base64 = "0.22"
+base64 = "0.23"
 url = "2"
 clap = { version = "4", features = ["derive"] }
 rust-embed = "8"
 regex = "1"
-md-5 = "0.10"
-sha1 = "0.10"
-num-bigint = "0.4"
+md-5 = "0.11"
+sha1 = "0.11"
+num-bigint = "0.5"
 rsa = { version = "0.9", features = ["pem"] }
-rand = "0.8"
+rand = "0.10"
 hex = "0.4"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 async-trait = "0.1"
 # SSH/SFTP：russh 0.63（自带 keys 模块，不再需要 russh-keys / ssh-key 直接依赖）
 russh = "0.63"
 russh-sftp = "3"
 # 持久化：redb 嵌入式 KV 库（单文件），账号数据 AES-256-GCM 加密后落盘
-redb = "2"
-aes-gcm = "0.10"
+redb = "4"
+aes-gcm = "0.11"
 # AES-ECB：蓝奏云/飞鸡盘接口签名用（AES-128-ECB + PKCS7，手写填充）
-aes = "0.8"
+aes = "0.9"
 
 [profile.release]
 strip = "symbols"
