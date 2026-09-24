@@ -42,6 +42,24 @@ pub mod webdav;
 pub mod weiyun;
 pub mod yandex_disk;
 
+/// 日期换算公共实现（原为 13 个驱动各自的副本）
+pub(crate) mod timeutil;
+
+/// 按字节截断字符串，供错误体展示用（不会切断 UTF-8 字符边界）
+///
+/// 直接写 `&s[..s.len().min(200)]` 会在第 200 字节落在多字节字符中间时 panic，
+/// 把整个响应变成 500/断连。
+pub(crate) fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 use crate::config::{Credential, Entry, Store};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -771,7 +789,7 @@ impl Driver {
             Driver::Lanzou(d) => d.list(parent_fid).await,
             Driver::Yun139(d) => d.list(parent_fid).await,
             Driver::Cloud189(d) => d.list(parent_fid).await,
-            Driver::Local(d) => d.list(parent_fid),
+            Driver::Local(d) => d.list(parent_fid).await,
             Driver::Webdav(d) => d.list(parent_fid).await,
             Driver::Pan123Share(d) => d.list(parent_fid).await,
             Driver::Weiyun(d) => d.list(parent_fid).await,
@@ -822,7 +840,7 @@ impl Driver {
             Driver::Lanzou(d) => d.download(e).await,
             Driver::Yun139(d) => d.download(e).await,
             Driver::Cloud189(d) => d.download(e).await,
-            Driver::Local(d) => d.download(e),
+            Driver::Local(d) => d.download(e).await,
             Driver::Webdav(d) => d.download(e).await,
             Driver::Pan123Share(d) => d.download(e).await,
             Driver::Weiyun(d) => d.download(e).await,
@@ -874,7 +892,7 @@ impl Driver {
             Driver::Lanzou(d) => d.mkdir(parent_fid, name).await,
             Driver::Yun139(d) => d.mkdir(parent_fid, name).await,
             Driver::Cloud189(d) => d.mkdir(parent_fid, name).await,
-            Driver::Local(d) => d.mkdir(parent_fid, name),
+            Driver::Local(d) => d.mkdir(parent_fid, name).await,
             Driver::Webdav(d) => d.mkdir(parent_fid, name).await,
             Driver::Pan123Share(d) => d.mkdir(parent_fid, name).await,
             Driver::Weiyun(d) => d.mkdir(parent_fid, name).await,
@@ -926,7 +944,7 @@ impl Driver {
             Driver::Lanzou(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Yun139(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Cloud189(d) => d.rename(parent_fid, e, new_name).await,
-            Driver::Local(d) => d.rename(parent_fid, e, new_name),
+            Driver::Local(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Webdav(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Pan123Share(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Weiyun(d) => d.rename(parent_fid, e, new_name).await,
@@ -983,7 +1001,7 @@ impl Driver {
             Driver::Lanzou(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Yun139(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Cloud189(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
-            Driver::Local(d) => d.move_entry(parent_fid, e, dst_dir_fid),
+            Driver::Local(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Webdav(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Pan123Share(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Weiyun(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
@@ -1035,7 +1053,7 @@ impl Driver {
             Driver::Lanzou(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Yun139(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Cloud189(d) => d.copy(parent_fid, e, dst_dir_fid).await,
-            Driver::Local(d) => d.copy(parent_fid, e, dst_dir_fid),
+            Driver::Local(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Webdav(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Pan123Share(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Weiyun(d) => d.copy(parent_fid, e, dst_dir_fid).await,
@@ -1087,7 +1105,7 @@ impl Driver {
             Driver::Lanzou(d) => d.remove(parent_fid, e).await,
             Driver::Yun139(d) => d.remove(parent_fid, e).await,
             Driver::Cloud189(d) => d.remove(parent_fid, e).await,
-            Driver::Local(d) => d.remove(parent_fid, e),
+            Driver::Local(d) => d.remove(parent_fid, e).await,
             Driver::Webdav(d) => d.remove(parent_fid, e).await,
             Driver::Pan123Share(d) => d.remove(parent_fid, e).await,
             Driver::Weiyun(d) => d.remove(parent_fid, e).await,
@@ -1177,6 +1195,35 @@ impl Driver {
             Driver::CloudreveV4(d) => d.put(dst_dir_fid, input).await,
             Driver::Terabox(d) => d.put(dst_dir_fid, input).await,
             Driver::Ilanzou(d) => d.put(dst_dir_fid, input).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_bytes_ascii() {
+        assert_eq!(truncate_bytes("hello", 200), "hello");
+        assert_eq!(truncate_bytes("hello", 3), "hel");
+        assert_eq!(truncate_bytes("hello", 0), "");
+    }
+
+    /// 回归用例：截断点落在多字节字符中间时必须回退到字符边界（否则 panic）
+    #[test]
+    fn test_truncate_bytes_multibyte_boundary() {
+        let s = format!("{}错", "a".repeat(198)); // '错' 占 198..201
+        assert_eq!(s.len(), 201);
+        let t = truncate_bytes(&s, 200);
+        assert_eq!(t.len(), 198);
+        assert!(s.starts_with(t));
+        // 中文全串按字节截断不 panic
+        let zh = "中文错误信息".repeat(40);
+        for max in 0..=zh.len() {
+            let t = truncate_bytes(&zh, max);
+            assert!(t.len() <= max);
+            assert!(zh.is_char_boundary(t.len()));
         }
     }
 }

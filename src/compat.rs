@@ -103,6 +103,9 @@ fn path_encode(p: &str) -> String {
         .join("/")
 }
 
+// 日期换算统一走 drivers/timeutil（原为本地副本）
+use crate::drivers::timeutil::civil_from_days;
+
 /// unix 毫秒 -> RFC3339（东八区），对齐 Go time.Time JSON 格式
 fn rfc3339_cst(ms: i64) -> String {
     let secs = (ms / 1000) + 8 * 3600;
@@ -111,16 +114,7 @@ fn rfc3339_cst(ms: i64) -> String {
     let hour = rem / 3600;
     let min = (rem % 3600) / 60;
     let sec = rem % 60;
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
+    let (y, m, d) = civil_from_days(days);
     format!("{y:04}-{m:02}-{d:02}T{hour:02}:{min:02}:{sec:02}+08:00")
 }
 
@@ -947,4 +941,42 @@ pub(crate) async fn compat_fs_put_progress(State(st): State<AppState>) -> Respon
         data.insert(k.clone(), json!(v.load(Ordering::Relaxed)));
     }
     compat_ok(Value::Object(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_path() {
+        assert_eq!(normalize_path("/a/b"), "/a/b");
+        assert_eq!(normalize_path("a/b"), "/a/b");
+        assert_eq!(normalize_path("/a/b/"), "/a/b"); // 去尾斜杠
+        assert_eq!(normalize_path("/"), "/");
+        assert_eq!(normalize_path(""), "/");
+        assert_eq!(normalize_path("  /a/  "), "/a"); // 去首尾空白
+    }
+
+    #[test]
+    fn test_path_encode() {
+        // 保留 '/'，空格与中文按 UTF-8 百分号编码
+        assert_eq!(path_encode("/a b/c"), "/a%20b/c");
+        assert_eq!(path_encode("/中文"), "/%E4%B8%AD%E6%96%87");
+        // unreserved + Go 版放行的子分隔符
+        assert_eq!(path_encode("/a-b_c.d~e"), "/a-b_c.d~e");
+        assert_eq!(path_encode("/a@b!c(d)e'f*g"), "/a@b!c(d)e'f*g");
+        assert_eq!(path_encode("/"), "/");
+    }
+
+    #[test]
+    fn test_obj_type() {
+        assert_eq!(obj_type("folder", true), T_FOLDER); // 目录优先，不看扩展名
+        assert_eq!(obj_type("a.MP4", false), T_VIDEO); // 扩展名大小写不敏感
+        assert_eq!(obj_type("a.mkv", false), T_VIDEO);
+        assert_eq!(obj_type("a.mp3", false), T_AUDIO);
+        assert_eq!(obj_type("a.png", false), T_IMAGE);
+        assert_eq!(obj_type("a.md", false), T_TEXT);
+        assert_eq!(obj_type("a.bin", false), T_UNKNOWN);
+        assert_eq!(obj_type("noext", false), T_UNKNOWN);
+    }
 }

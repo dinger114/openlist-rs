@@ -2308,18 +2308,11 @@ async fn serve_local_file(
         })?
         .len();
 
-    // 解析 Range: bytes=start-end / bytes=start- / bytes=-suffix
+    // 解析 Range: bytes=start-end / bytes=start- / bytes=-suffix（需结合 total 才能定后缀区间）
     let range = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
-        .and_then(parse_range)
-        .map(|(start, end)| {
-            (
-                start.min(total.saturating_sub(1)),
-                end.min(total.saturating_sub(1)),
-            )
-        })
-        .filter(|(start, end)| start <= end && *start < total);
+        .and_then(|s| parse_range(s, total));
 
     let (status, start, end, content_length) = match range {
         Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end, end - start + 1),
@@ -2378,18 +2371,43 @@ async fn serve_local_file(
     })
 }
 
-/// 解析 "bytes=start-end" 形式的 Range 头（不含多区间）
-fn parse_range(s: &str) -> Option<(u64, u64)> {
+/// 解析 "bytes=start-end" 形式的 Range 头（不含多区间），返回绝对的 (start, end) 闭区间
+///
+/// 需要 `total` 才能正确处理后缀区间 `bytes=-N`（最后 N 字节）——早期实现拿 `u64::MAX`
+/// 当占位，调用方再 `min(total-1)`，结果 `bytes=-500` 只会返回最后 1 个字节，
+/// Safari/iOS 播放视频时会直接报错。
+fn parse_range(s: &str, total: u64) -> Option<(u64, u64)> {
     let rest = s.strip_prefix("bytes=")?;
     // 仅取第一个区间
     let first = rest.split(',').next()?.trim();
     let (start_s, end_s) = first.split_once('-')?;
-    let total_max = u64::MAX;
-    match (start_s.trim().parse::<u64>(), end_s.trim().parse::<u64>()) {
-        (Ok(start), Ok(end)) if start <= end => Some((start, end)),
-        (Ok(start), Err(_)) => Some((start, total_max)),
-        // bytes=-suffix：最后 suffix 字节，start 待调用方结合 total 修正（这里先返回 0 占位）
-        (Err(_), Ok(suffix)) if suffix > 0 => Some((total_max.saturating_sub(suffix), total_max)),
+    let (start_s, end_s) = (start_s.trim(), end_s.trim());
+    let last = total.saturating_sub(1);
+    match (start_s.parse::<u64>(), end_s.parse::<u64>()) {
+        // bytes=start-end
+        (Ok(start), Ok(end)) => {
+            if start > end || start >= total {
+                None
+            } else {
+                Some((start, end.min(last)))
+            }
+        }
+        // bytes=start-
+        (Ok(start), Err(_)) if end_s.is_empty() => {
+            if start >= total {
+                None
+            } else {
+                Some((start, last))
+            }
+        }
+        // bytes=-suffix
+        (Err(_), Ok(suffix)) if start_s.is_empty() && suffix > 0 => {
+            if total == 0 {
+                None
+            } else {
+                Some((total.saturating_sub(suffix), last))
+            }
+        }
         _ => None,
     }
 }
@@ -3481,4 +3499,129 @@ pub(crate) async fn patch_account_enabled(
         })?;
     }
     Ok(Json(json!({ "id": id, "enabled": req.enabled })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn any_cred() -> Credential {
+        Credential::Local {
+            root_path: "/mnt/data".into(),
+        }
+    }
+
+    /// 对照 Go 版各驱动 meta.go 的 DefaultRoot 字段
+    #[test]
+    fn test_default_root_fid_matches_go_meta() {
+        let c = any_cred();
+        let cases: &[(&str, &str)] = &[
+            ("pan139", "/"),
+            ("cloud189", "-11"),
+            ("webdav", "/"),
+            ("s3", "/"),
+            ("sftp", "/"),
+            ("ftp", "/"),
+            ("alist_v3", "/"),
+            ("github_releases", "/"),
+            ("onedrive_app", "/"),
+            ("pikpak_share", "/"),
+            ("openlist", "/"),
+            ("openlist_share", "/"),
+            ("virtual", "/"),
+            ("bunny", "/"),
+            ("yandex_disk", "/"),
+            ("seafile", "/"),
+            ("kodbox", "/"),
+            ("cloudreve_v4", "/"),
+            ("terabox", "/"),
+            ("smb", "."),
+            ("123pan_share", "0"),
+            ("weiyun", ""),
+            ("aliyundrive_open", "root"),
+            ("baidu_netdisk", "/"),
+            ("lanzou", "-1"),
+        ];
+        for (kind, want) in cases {
+            assert_eq!(default_root_fid(kind, &c), *want, "driver={kind}");
+        }
+        // 未知驱动兜底 "0"
+        assert_eq!(default_root_fid("some_unknown", &c), "0");
+    }
+
+    /// 四个驱动的默认根取自凭据字段，空串走各自兜底值
+    #[test]
+    fn test_default_root_fid_from_credential() {
+        assert_eq!(
+            default_root_fid(
+                "local",
+                &Credential::Local {
+                    root_path: "/mnt/data".into()
+                }
+            ),
+            "/mnt/data"
+        );
+        let ilanzou = |root_folder_id: &str| Credential::Ilanzou {
+            site: "ilanzou".into(),
+            username: "u".into(),
+            password: "p".into(),
+            root_folder_id: root_folder_id.into(),
+        };
+        assert_eq!(default_root_fid("ilanzou", &ilanzou("")), "0");
+        assert_eq!(default_root_fid("ilanzou", &ilanzou("-1")), "-1");
+        let onedrive = |root_path: &str| Credential::Onedrive {
+            region: "global".into(),
+            is_sharepoint: false,
+            site_id: String::new(),
+            root_path: root_path.into(),
+            refresh_token: "rt".into(),
+            access_token: String::new(),
+        };
+        assert_eq!(default_root_fid("onedrive", &onedrive("")), "/");
+        assert_eq!(default_root_fid("onedrive", &onedrive("/docs")), "/docs");
+        let gdrive = |root_folder_id: &str| Credential::GoogleDrive {
+            refresh_token: "rt".into(),
+            access_token: String::new(),
+            root_folder_id: root_folder_id.into(),
+        };
+        assert_eq!(default_root_fid("google_drive", &gdrive("")), "root");
+        assert_eq!(default_root_fid("google_drive", &gdrive("fid1")), "fid1");
+    }
+
+    /// 与 Go 版的分歧，仅钉住现状：Go 版 thunder 无 DefaultRoot，根用空串；
+    /// Rust 版落在 `_ => "0"`。没有可用账号无法实测，改动前先拿账号验证。
+    #[test]
+    fn test_default_root_fid_thunder_unverified() {
+        assert_eq!(default_root_fid("thunder", &any_cred()), "0");
+    }
+
+    #[test]
+    fn test_parse_range_with_total() {
+        // 显式闭区间
+        assert_eq!(parse_range("bytes=0-99", 1000), Some((0, 99)));
+        assert_eq!(parse_range("bytes=0-0", 1000), Some((0, 0)));
+        // 开区间到结尾
+        assert_eq!(parse_range("bytes=100-", 1000), Some((100, 999)));
+        assert_eq!(parse_range("bytes=999-", 1000), Some((999, 999)));
+        // 后缀区间：最后 N 字节（回归用例：曾只返回最后 1 字节）
+        assert_eq!(parse_range("bytes=-500", 1000), Some((500, 999)));
+        assert_eq!(parse_range("bytes=-1", 1000), Some((999, 999)));
+        assert_eq!(parse_range("bytes=-1000", 1000), Some((0, 999)));
+        assert_eq!(parse_range("bytes=-5000", 1000), Some((0, 999)));
+        // 超出文件尾 -> 截到结尾
+        assert_eq!(parse_range("bytes=0-99999", 1000), Some((0, 999)));
+        // 起点越过文件尾 -> 不返回区间（整体 200）
+        assert_eq!(parse_range("bytes=1000-", 1000), None);
+        assert_eq!(parse_range("bytes=1000-2000", 1000), None);
+        // 多区间只取第一段
+        assert_eq!(parse_range("bytes=0-1,5-9", 1000), Some((0, 1)));
+        // 非法头部
+        assert_eq!(parse_range("bytes=-", 1000), None);
+        assert_eq!(parse_range("bytes=abc", 1000), None);
+        assert_eq!(parse_range("bytes=5-2", 1000), None);
+        assert_eq!(parse_range("items=0-1", 1000), None);
+        // 空文件
+        assert_eq!(parse_range("bytes=0-", 0), None);
+        assert_eq!(parse_range("bytes=-10", 0), None);
+    }
 }

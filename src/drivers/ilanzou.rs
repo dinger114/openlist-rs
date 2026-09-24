@@ -753,14 +753,12 @@ fn http_date_time_now() -> String {
     let days = now.div_euclid(86400);
     let secs = now.rem_euclid(86400);
     let (y, m, d) = civil_from_days(days);
-    let weekday = (days + 4) % 7; // 1970-01-01 是周四
-    const W: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     const MO: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     format!(
         "{} {:02} {} {:04} {:02}:{:02}:{:02} GMT+0000",
-        W[weekday as usize],
+        weekday_short_utc(days),
         d,
         MO[(m - 1) as usize],
         y,
@@ -770,18 +768,8 @@ fn http_date_time_now() -> String {
     )
 }
 
-fn civil_from_days(z: i64) -> (i64, i64, i64) {
-    let z = z + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
+// 日期换算统一走 drivers/timeutil（原为本地副本；原星期名算法错 4 天，见 timeutil 测试）
+use super::timeutil::{civil_from_days, days_from_civil, weekday_short_utc};
 
 /// 本地 datetime "2006-01-02 15:04:05" → 毫秒时间戳
 fn parse_local_datetime_millis(s: &str) -> Option<i64> {
@@ -793,16 +781,6 @@ fn parse_local_datetime_millis(s: &str) -> Option<i64> {
     let sec: i64 = s.get(17..19)?.parse().ok()?;
     let z = days_from_civil(y, mo, d);
     Some((z * 86400 + h * 3600 + mi * 60 + sec) * 1000)
-}
-
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
 }
 
 fn urlencode(s: &str) -> String {

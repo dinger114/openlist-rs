@@ -61,20 +61,12 @@ fn parse_cn_time(t: &str) -> Option<i64> {
     let hh = num(11..13)?;
     let mm = num(14..16)?;
     let ss = num(17..19)?;
-    let days = days_from_civil(y, m, d);
+    let days = days_from_civil(y, m as i64, d as i64);
     Some((days * 86_400 + hh as i64 * 3600 + mm as i64 * 60 + ss as i64 - 8 * 3600) * 1000)
 }
 
-/// Howard Hinnant days_from_civil
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe
-}
+/// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::days_from_civil;
 
 /// 对齐 Go random()："0." + 17 位宽的随机数
 fn random_param() -> String {
@@ -223,7 +215,7 @@ impl Cloud189 {
             serde_json::from_str::<Value>(&body).map_err(|_| {
                 format!(
                     "189 {step} 响应非 JSON (HTTP {status}): {}",
-                    &body[..body.len().min(200)]
+                    super::truncate_bytes(&body, 200)
                 )
             })
         };

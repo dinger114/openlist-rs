@@ -251,6 +251,9 @@ fn size_str_to_u64(s: &str) -> u64 {
     }
 }
 
+// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::days_from_civil;
+
 /// 对齐 MustParseTime：支持 "YYYY-MM-DD" 与相对时间（x秒/分钟/小时/天前、昨天/前天）
 fn parse_time_to_ms(s: &str) -> Option<i64> {
     let date_re = Regex::new(r"\d{4}-\d{2}-\d{2}").unwrap();
@@ -258,13 +261,7 @@ fn parse_time_to_ms(s: &str) -> Option<i64> {
         let ds = d.as_str();
         let num = |r: std::ops::Range<usize>| ds.get(r).and_then(|x| x.parse::<i64>().ok());
         let (y, mo, dd) = (num(0..4)?, num(5..7)?, num(8..10)?);
-        let y2 = if mo <= 2 { y - 1 } else { y };
-        let era = y2.div_euclid(400);
-        let yoe = y2 - era * 400;
-        let mp = (mo + 9) % 12;
-        let doy = (153 * mp + 2) / 5 + dd - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        return Some((era * 146_097 + doe - 719_468) * 86_400_000);
+        return Some(days_from_civil(y, mo, dd) * 86_400_000);
     }
     // 相对时间
     let re = Regex::new(r"([0-9.]*)\s*([\u{4e00}-\u{9fa5}]+)").unwrap();

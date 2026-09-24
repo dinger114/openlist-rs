@@ -46,6 +46,9 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
+// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::civil_from_days;
+
 /// unix 秒 -> 北京时间 (UTC+8) "yyyyMMddHHmm" 字符串
 fn beijing_yyyymmddhhmm(unix_secs: u64) -> String {
     let secs = unix_secs + 8 * 3600;
@@ -54,16 +57,7 @@ fn beijing_yyyymmddhhmm(unix_secs: u64) -> String {
     let hour = rem / 3600;
     let min = (rem % 3600) / 60;
     // Howard Hinnant civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
+    let (y, m, d) = civil_from_days(days);
     format!("{y:04}{m:02}{d:02}{hour:02}{min:02}")
 }
 
@@ -631,7 +625,7 @@ impl Pan123 {
                                 let t = r.text().await.unwrap_or_default();
                                 last_err = format!(
                                     "123 分片 {cur} 上传失败: status={status}, body={}",
-                                    &t[..t.len().min(200)]
+                                    super::truncate_bytes(&t, 200)
                                 );
                                 continue;
                             }
@@ -801,16 +795,7 @@ fn rfc3339_utc(ms: i64) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     // Howard Hinnant civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
+    let (y, m, d) = civil_from_days(days);
     format!(
         "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{millis:03}Z",
         rem / 3600,

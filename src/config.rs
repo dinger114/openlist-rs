@@ -799,3 +799,67 @@ fn import_legacy(dir: &Path) -> Option<Config> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encrypt_decrypt_round_trip() {
+        let key = [7u8; KEY_LEN];
+        let plain = b"openlist credential payload".to_vec();
+        let blob = encrypt(&key, &plain).unwrap();
+        assert_ne!(blob, plain, "密文不能等于明文");
+        assert!(blob.len() > plain.len(), "密文应含 nonce + tag");
+        assert_eq!(decrypt(&key, &blob).unwrap(), plain);
+    }
+
+    #[test]
+    fn test_encrypt_uses_fresh_nonce() {
+        let key = [7u8; KEY_LEN];
+        let a = encrypt(&key, b"same input").unwrap();
+        let b = encrypt(&key, b"same input").unwrap();
+        assert_ne!(a, b, "每次加密应使用独立 nonce");
+        assert_eq!(decrypt(&key, &a).unwrap(), decrypt(&key, &b).unwrap());
+    }
+
+    #[test]
+    fn test_decrypt_wrong_key_fails() {
+        let blob = encrypt(&[1u8; KEY_LEN], b"secret").unwrap();
+        assert!(decrypt(&[2u8; KEY_LEN], &blob).is_err());
+    }
+
+    #[test]
+    fn test_decrypt_tampered_blob_fails() {
+        let key = [3u8; KEY_LEN];
+        let mut blob = encrypt(&key, b"secret").unwrap();
+        let last = blob.len() - 1;
+        blob[last] ^= 0x01;
+        assert!(decrypt(&key, &blob).is_err(), "GCM 应校验完整性");
+    }
+
+    #[test]
+    fn test_decrypt_short_blob_fails() {
+        let key = [1u8; KEY_LEN];
+        assert!(decrypt(&key, &[]).is_err());
+        assert!(decrypt(&key, &[0u8; NONCE_LEN]).is_err());
+        assert!(decrypt(&key, &[0u8; NONCE_LEN + TAG_LEN - 1]).is_err());
+    }
+
+    /// 密钥文件：首次生成、再次读取一致，Unix 下权限 0600
+    #[test]
+    fn test_load_or_create_key_round_trip() {
+        let dir = std::env::temp_dir().join(format!("ol-rs-key-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let k1 = load_or_create_key(&dir);
+        let k2 = load_or_create_key(&dir);
+        assert_eq!(k1, k2);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let meta = std::fs::metadata(dir.join("openlist.key")).unwrap();
+            assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

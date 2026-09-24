@@ -29,20 +29,12 @@ const OLD_BASE: &str = "https://yun.139.com";
 
 // ---------- 时间工具（对齐 Go 版 getTime / getPersonalTime，CN = UTC+8） ----------
 
-/// Howard Hinnant days_from_civil
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = if m > 2 { m - 3 } else { m + 9 } as i64;
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe
-}
+// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::{civil_from_days, days_from_civil};
 
 /// 北京时间 (UTC+8) 各字段 -> epoch 毫秒
 fn cn_ymdhms_to_ms(y: i64, m: u32, d: u32, hh: u32, mm: u32, ss: u32, ms: u32) -> i64 {
-    let days = days_from_civil(y, m, d);
+    let days = days_from_civil(y, m as i64, d as i64);
     (days * 86_400 + hh as i64 * 3600 + mm as i64 * 60 + ss as i64 - 8 * 3600) * 1000 + ms as i64
 }
 
@@ -54,21 +46,11 @@ fn cn_now_parts() -> (i64, u32, u32, u32, u32, u32) {
     let secs = now.as_secs() as i64 + 8 * 3600;
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
-    // civil_from_days
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
+    let (y, m, d) = civil_from_days(days);
     (
         y,
-        m as u32,
-        d as u32,
+        m,
+        d,
         (rem / 3600) as u32,
         (rem % 3600 / 60) as u32,
         (rem % 60) as u32,
@@ -116,7 +98,10 @@ fn parse_personal_time(t: &str) -> Option<i64> {
     } else {
         0 // Z 或缺失按 UTC 处理
     };
-    let base = days_from_civil(y, m, d) * 86_400 + hh as i64 * 3600 + mm as i64 * 60 + ss as i64
+    let base = days_from_civil(y, m as i64, d as i64) * 86_400
+        + hh as i64 * 3600
+        + mm as i64 * 60
+        + ss as i64
         - offset_secs;
     Some(base * 1000 + ms as i64)
 }
@@ -1118,7 +1103,7 @@ impl Yun139 {
                     let text = resp.text().await.unwrap_or_default();
                     last_err = format!(
                         "139 分片上传返回异常状态 {status}: {}",
-                        &text[..text.len().min(200)]
+                        super::truncate_bytes(&text, 200)
                     );
                 }
                 Err(e) => last_err = format!("139 分片上传失败: {e}"),
@@ -1253,7 +1238,7 @@ impl Yun139 {
                     if status != 200 {
                         last_err = format!(
                             "139 分片上传返回异常状态 {status}: {}",
-                            &text[..text.len().min(200)]
+                            super::truncate_bytes(&text, 200)
                         );
                         continue;
                     }

@@ -592,16 +592,8 @@ fn month_of(s: &str) -> Option<i64> {
     }
 }
 
-/// Howard Hinnant days_from_civil
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
+/// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::days_from_civil;
 
 #[cfg(test)]
 mod tests {

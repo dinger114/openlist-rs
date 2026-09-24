@@ -531,7 +531,7 @@ impl QuarkOrUC {
                         let t = r.text().await.unwrap_or_default();
                         last_err = format!(
                             "夸克分片上传失败: status={status}, body={}",
-                            &t[..t.len().min(200)]
+                            super::truncate_bytes(&t, 200)
                         );
                         continue;
                     }
@@ -621,7 +621,7 @@ impl QuarkOrUC {
             let t = resp.text().await.unwrap_or_default();
             return Err(format!(
                 "夸克分片合并失败: status={status}, body={}",
-                &t[..t.len().min(200)]
+                super::truncate_bytes(&t, 200)
             ));
         }
         Ok(())
@@ -689,23 +689,11 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Howard Hinnant civil_from_days：epoch 天数 -> (年, 月, 日)
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
-}
+// 日期换算统一走 drivers/timeutil（原为本地副本）
+use super::timeutil::{civil_from_days, weekday_short_utc};
 
 /// 当前 UTC 时间的 HTTP 日期格式（对齐 Go http.TimeFormat："Mon, 02 Jan 2006 15:04:05 GMT"）
 fn http_time_now() -> String {
-    const WD: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     const MO: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -715,12 +703,10 @@ fn http_time_now() -> String {
         .as_secs();
     let days = (secs / 86400) as i64;
     let rem = secs % 86400;
-    // 1970-01-01 是星期四，WD 从 Thu 开始
-    let wd = WD[(days.rem_euclid(7)) as usize];
     let (y, m, d) = civil_from_days(days);
     format!(
         "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-        wd,
+        weekday_short_utc(days),
         d,
         MO[(m - 1) as usize],
         y,
