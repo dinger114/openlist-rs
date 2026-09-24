@@ -748,14 +748,17 @@ html.dark .obj-box {
 }
 .lt-size {
   width: 17%;
+  flex-shrink: 0;
   text-align: right;
 }
 .lt-date {
-  width: 33%;
+  width: 26%;
+  flex-shrink: 0;
   text-align: right;
 }
 .lt-op {
-  width: 132px;
+  /* 文件行最多 6 个图标（播放/下载/重命名/移动/复制/删除）：28*6 + 2*5 = 178 */
+  width: 178px;
   flex-shrink: 0;
 }
 
@@ -801,20 +804,23 @@ html.dark .list-item:hover {
 }
 .li-size {
   width: 17%;
+  flex-shrink: 0;
   text-align: right;
   color: var(--ol-text-dim);
   font-size: 13px;
   white-space: nowrap;
 }
 .li-date {
-  width: 33%;
+  width: 26%;
+  flex-shrink: 0;
   text-align: right;
   color: var(--ol-text-dim);
   font-size: 13px;
   white-space: nowrap;
 }
 .li-op {
-  width: 132px;
+  /* 必须容得下最多 6 个 28px 图标：旧值 132px 会让图标往左溢出压住「修改时间」 */
+  width: 178px;
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
