@@ -1,0 +1,86 @@
+# 依赖自动更新：Dependabot 负责开 PR，.github/workflows/dependabot-automerge.yml 负责在 CI 绿后自动合并
+#
+# 分组策略（重要）：不要把 major 和 minor/patch 混在一个组里。一个 patterns: ["*"] 的组会把
+# 大版本升级和小补丁打包成同一个 PR，届时只有「全接受」或「全拒绝」两个选项，major 会悄悄混进来。
+# 所以按 semver 级别分组：
+#   *-minor-patch → 一个 PR，CI 绿后自动 squash 合并（无人值守）
+#   *-major       → 单独 PR，只评论提醒，必须人工确认（breaking changes）
+#
+# 枚举坑：group 里的 update-types 用 major/minor/patch；ignore/allow 里才用 version-update:semver-*。
+# applies-to 默认是 version-updates，安全更新组必须显式写 applies-to: security-updates 才会匹配。
+version: 2
+updates:
+  # Rust 依赖（Cargo.toml + Cargo.lock）
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [minor, patch]
+      cargo-major:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [major]
+      cargo-security:
+        patterns: ["*"]
+        applies-to: security-updates
+
+  # 前端依赖（web/package.json + package-lock.json）
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [minor, patch]
+      npm-major:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [major]
+      npm-security:
+        patterns: ["*"]
+        applies-to: security-updates
+
+  # GitHub Actions 自身（actions/checkout、dtolnay/rust-toolchain 等）
+  # 注意：本生态不支持 versioning-strategy，别写（写了不报错，但会被忽略）
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [minor, patch]
+      actions-major:
+        patterns: ["*"]
+        applies-to: version-updates
+        update-types: [major]

@@ -1,0 +1,80 @@
+name: dependabot-automerge
+
+# 为什么用 pull_request_target 而不是 pull_request：
+#   dependabot 触发的 run 被 GitHub 当作 fork 上来的 run，pull_request 事件给的 GITHUB_TOKEN 是只读的，
+#   gh pr merge / gh pr comment 必然 403。pull_request_target 用**默认分支上的这个文件**运行并给读写 token；
+#   本工作流不 checkout PR 代码、不执行 PR 里的任何东西，所以没有 code injection 风险。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write       # squash 合并 + 删分支
+  pull-requests: write  # 评论
+  actions: write        # 合并后补一次 ci dispatch（见最后一步的原因）
+
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    name: dependabot-automerge
+    # 只有 dependabot 的 PR 走这套；不是草稿
+    if: github.actor == 'dependabot[bot]' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: 读依赖元数据（依赖名 / 升级级别 / 分组）
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 打印判定依据
+        run: |
+          echo "依赖   : ${{ steps.meta.outputs.dependency-names }}"
+          echo "级别   : ${{ steps.meta.outputs.update-type }}"
+          echo "分组   : ${{ steps.meta.outputs.dependency-group }}"
+          echo "生态   : ${{ steps.meta.outputs.package-ecosystem }}"
+
+      - name: major 升级 → 只提醒，不合并
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr comment "$PR_URL" --body "⚠️ 这是 **major** 版本升级（${{ steps.meta.outputs.dependency-names }}），不自动合并 —— 请在 CI 绿后人工确认 breaking changes（release notes / changelog）。"
+
+      - name: minor / patch → 等 CI 绿后 squash 合并
+        if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          # 本工作流自己也在 PR 上留下一个 check。它的状态永远是「进行中」（干活的正是它），
+          # 不排除掉就会死等到超时 —— 必须按 workflow 名过滤。
+          SELF='dependabot-automerge'
+          for i in $(seq 1 40); do   # 40 × 30s = 最多等 20 分钟
+            raw=$(gh pr checks "$PR_URL" --json name,workflow,state,bucket 2>/dev/null || true)
+            # 还没有任何 check 注册时 gh 会非零退出且不输出，jq 会炸 → 兜底成空数组
+            case "$raw" in \[*) ;; *) raw='[]' ;; esac
+            read -r total bad pending <<<"$(printf '%s' "$raw" | jq -r --arg self "$SELF" '
+              [.[] | select(.workflow != $self)] as $c
+              | "\($c | length) \($c | map(select(.bucket == "fail" or .bucket == "cancel")) | length) \($c | map(select(.bucket == "pending")) | length)"')"
+            echo "第 $i 次检查：总 $total，失败 $bad，进行中 $pending"
+
+            if [ "$bad" -gt 0 ]; then
+              gh pr comment "$PR_URL" --body "CI 有失败项，不自动合并，请人工查看。"
+              exit 0
+            fi
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              gh pr merge "$PR_URL" --squash --delete-branch
+              # GITHUB_TOKEN 造成的 push 不会触发 push 工作流，master 上会缺 CI 记录；
+              # 显式补一次 ci（ci.yml 带 workflow_dispatch），保持「master 必有绿」的约定。
+              gh workflow run ci.yml --ref master || true
+              exit 0
+            fi
+            sleep 30
+          done
+          gh pr comment "$PR_URL" --body "等待 CI 超过 20 分钟仍未出结果，不自动合并。"
