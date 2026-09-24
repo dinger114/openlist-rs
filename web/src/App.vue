@@ -934,15 +934,21 @@ async function resolveUrl(e, forceProxy = false) {
 }
 
 function download(e) {
-  // 先同步开窗口，避免 resolveUrl 的 await 之后 window.open 被浏览器当弹窗拦截
-  const win = window.open('', '_blank')
+  // 上游 CDN（ipfs-gateway.qzy.xyz）有防盗链：请求带外部 Referer/Origin 一律 403，
+  // 而 window.open 必然带上面板的地址 → 浏览器里下载下来是空白文件（命令行不带 Referer 所以测不出来）。
+  // 用 <a rel="noreferrer" referrerpolicy="no-referrer"> 打开即可，浏览器不再发送 Referer，直链照旧可下。
   resolveUrl(e)
     .then((url) => {
-      if (win) win.location = url
-      else window.open(url, '_blank')
+      const a = document.createElement('a')
+      a.href = url
+      a.target = '_blank'
+      a.rel = 'noreferrer'
+      a.referrerPolicy = 'no-referrer'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
     })
     .catch((ex) => {
-      win?.close()
       err.value = ex.message || '获取下载地址失败'
     })
 }
