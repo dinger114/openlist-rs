@@ -357,7 +357,11 @@ impl PikPakShare {
                 .cloned()
                 .unwrap_or_default();
             for f in files {
-                let id = f.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                let id = f
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let name = f
                     .get("name")
                     .and_then(|n| n.as_str())

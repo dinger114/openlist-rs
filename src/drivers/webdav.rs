@@ -88,7 +88,10 @@ impl Webdav {
         let dir = self.resolve_abs(parent_fid);
         let resp = self
             .http
-            .request(Method::from_bytes(b"PROPFIND").unwrap(), format!("{}{}", self.origin, encode_vpath(&dir)))
+            .request(
+                Method::from_bytes(b"PROPFIND").unwrap(),
+                format!("{}{}", self.origin, encode_vpath(&dir)),
+            )
             .basic_auth(&self.username, Some(&self.password))
             .header("Depth", "1")
             .header("Content-Type", "application/xml")
@@ -106,7 +109,10 @@ impl Webdav {
         if status != 207 && !(200..300).contains(&status) {
             return Err(format!("WebDAV 服务器返回异常状态码: {status}"));
         }
-        let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取响应失败: {e}"))?;
 
         // 自身在服务器上的绝对路径（Depth:1 的第一条是自身）
         let self_abs = dir.trim_end_matches('/').to_string();
@@ -164,12 +170,7 @@ impl Webdav {
     // ---------- 写操作（对齐 Go 版 MakeDir/Move/Rename/Copy/Remove/Put） ----------
 
     /// 发送 MOVE / COPY 请求（Destination 头指向目标绝对路径，对齐 gowebdav）
-    async fn move_or_copy(
-        &self,
-        method: &str,
-        src_abs: &str,
-        dst_abs: &str,
-    ) -> Result<(), String> {
+    async fn move_or_copy(&self, method: &str, src_abs: &str, dst_abs: &str) -> Result<(), String> {
         let url = format!("{}{}", self.origin, encode_vpath(src_abs));
         let dest = format!("{}{}", self.origin, encode_vpath(dst_abs));
         let resp = self
@@ -244,7 +245,12 @@ impl Webdav {
     }
 
     /// 对齐 Copy：COPY src -> dstDir/name（Overwrite: T）
-    pub async fn copy(&self, _parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        e: &Entry,
+        dst_dir_fid: &str,
+    ) -> Result<(), String> {
         let src = self.resolve_abs(&e.fid);
         let dst_dir = self.resolve_abs(dst_dir_fid);
         let dst = join_vpath(&dst_dir, &format!("/{}", encode_vpath(&e.name)));
@@ -424,13 +430,22 @@ fn res(pat: &'static str) -> &'static Regex {
     static LOCK: OnceLock<std::collections::HashMap<&'static str, Regex>> = OnceLock::new();
     LOCK.get_or_init(|| {
         let mut m = std::collections::HashMap::new();
-        m.insert("resp", Regex::new(r"(?is)<(\w+:)?response\b[^>]*>(.*?)</(\w+:)?response>").unwrap());
-        m.insert("href", Regex::new(r"(?is)<(\w+:)?href[^>]*>(.*?)</(\w+:)?href>").unwrap());
+        m.insert(
+            "resp",
+            Regex::new(r"(?is)<(\w+:)?response\b[^>]*>(.*?)</(\w+:)?response>").unwrap(),
+        );
+        m.insert(
+            "href",
+            Regex::new(r"(?is)<(\w+:)?href[^>]*>(.*?)</(\w+:)?href>").unwrap(),
+        );
         m.insert(
             "collection",
             Regex::new(r"(?is)<(\w+:)?resourcetype[^>]*>\s*<(\w+:)?collection\b").unwrap(),
         );
-        m.insert("len", Regex::new(r"(?is)<(\w+:)?getcontentlength[^>]*>\s*(\d+)").unwrap());
+        m.insert(
+            "len",
+            Regex::new(r"(?is)<(\w+:)?getcontentlength[^>]*>\s*(\d+)").unwrap(),
+        );
         m.insert(
             "lm",
             Regex::new(r"(?is)<(\w+:)?getlastmodified[^>]*>\s*([^<]+?)\s*<").unwrap(),
@@ -677,7 +692,11 @@ mod tests {
                     return None;
                 }
                 let fid = p.strip_prefix(root_prefix)?.trim_start_matches('/');
-                if fid.is_empty() { None } else { Some(fid.to_string()) }
+                if fid.is_empty() {
+                    None
+                } else {
+                    Some(fid.to_string())
+                }
             })
             .collect();
         assert_eq!(fids, vec!["Via", "dj.txt"]);
@@ -733,6 +752,9 @@ mod tests {
 
     #[test]
     fn test_http_date() {
-        assert_eq!(parse_http_date_ms("Mon, 01 Jan 2024 00:00:00 GMT"), Some(1_704_067_200_000));
+        assert_eq!(
+            parse_http_date_ms("Mon, 01 Jan 2024 00:00:00 GMT"),
+            Some(1_704_067_200_000)
+        );
     }
 }

@@ -206,7 +206,10 @@ impl OnedriveApp {
                 return Err(format!("OnedriveAPP: {msg}"));
             }
             if !(200..300).contains(&status) && !text.is_empty() {
-                return Err(format!("OnedriveAPP HTTP {status}: {}", truncate(&text, 300)));
+                return Err(format!(
+                    "OnedriveAPP HTTP {status}: {}",
+                    truncate(&text, 300)
+                ));
             }
             return Ok(v);
         }
@@ -376,7 +379,12 @@ impl OnedriveApp {
         Ok(())
     }
 
-    pub async fn copy(&self, _parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        e: &Entry,
+        dst_dir_fid: &str,
+    ) -> Result<(), String> {
         let path = self.abs_path(&e.fid);
         let dst = self.abs_path(dst_dir_fid);
         let url = format!("{}/copy", self.meta_url(&path));
@@ -436,7 +444,10 @@ impl OnedriveApp {
         let st = resp.status().as_u16();
         if !(200..300).contains(&st) {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("OnedriveAPP 上传失败 ({st}): {}", truncate(&text, 300)));
+            return Err(format!(
+                "OnedriveAPP 上传失败 ({st}): {}",
+                truncate(&text, 300)
+            ));
         }
         Ok(())
     }

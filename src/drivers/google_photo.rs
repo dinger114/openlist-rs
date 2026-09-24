@@ -126,7 +126,10 @@ impl GooglePhoto {
                 continue;
             }
             if !(200..300).contains(&status) {
-                return Err(format!("Google Photos API ({status}): {}", truncate(&text, 300)));
+                return Err(format!(
+                    "Google Photos API ({status}): {}",
+                    truncate(&text, 300)
+                ));
             }
             return serde_json::from_str(&text).map_err(|e| format!("解析: {e}"));
         }
@@ -152,7 +155,10 @@ impl GooglePhoto {
                 continue;
             }
             if !(200..300).contains(&status) {
-                return Err(format!("Google Photos API ({status}): {}", truncate(&text, 300)));
+                return Err(format!(
+                    "Google Photos API ({status}): {}",
+                    truncate(&text, 300)
+                ));
             }
             return serde_json::from_str(&text).map_err(|e| format!("解析: {e}"));
         }
@@ -202,7 +208,13 @@ impl GooglePhoto {
         let mut out = Vec::new();
         let mut page_token = String::new();
         loop {
-            let mut q = vec![("pageSize", "50"), ("fields", "albums(id,title),sharedAlbums(id,title),nextPageToken")];
+            let mut q = vec![
+                ("pageSize", "50"),
+                (
+                    "fields",
+                    "albums(id,title),sharedAlbums(id,title),nextPageToken",
+                ),
+            ];
             if !page_token.is_empty() {
                 q.push(("pageToken", page_token.as_str()));
             }
@@ -216,7 +228,11 @@ impl GooglePhoto {
                 .cloned()
                 .unwrap_or_default();
             for a in albums {
-                let id = a.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                let id = a
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let title = a
                     .get("title")
                     .and_then(|t| t.as_str())
@@ -306,7 +322,11 @@ impl GooglePhoto {
             .cloned()
             .unwrap_or_default();
         for m in items {
-            let id = m.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+            let id = m
+                .get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or("")
+                .to_string();
             let filename = m
                 .get("filename")
                 .and_then(|n| n.as_str())

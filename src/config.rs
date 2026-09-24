@@ -377,7 +377,6 @@ pub enum Credential {
     },
 
     // ---------- Tier 1 / Tier 2 新增驱动（对齐 OpenList-go） ----------
-
     /// OpenList 远程挂载（协议与 AList V3 同源 /api/fs/*）
     Openlist {
         url: String,
@@ -491,7 +490,6 @@ pub enum Credential {
         #[serde(default = "default_ilanzou_root")]
         root_folder_id: String,
     },
-
 }
 
 fn default_alipan_type() -> String {
@@ -518,22 +516,54 @@ fn default_onedrive_root() -> String {
     "/".to_string()
 }
 
-fn default_s3_region() -> String { "us-east-1".to_string() }
-fn default_gh_per_page() -> u32 { 30 }
-fn default_true() -> bool { true }
-fn default_123link_duration() -> i64 { 30 }
-fn default_link_method() -> String { "download".to_string() }
-fn default_s3_expire() -> u64 { 4 }
-fn default_s3_root() -> String { "/".to_string() }
-fn default_sftp_root() -> String { "/".to_string() }
-fn default_ftp_root() -> String { "/".to_string() }
-fn default_virtual_num_file() -> u32 { 5 }
-fn default_bunny_region() -> String { "us-east-1".to_string() }
-fn default_kodbox_root() -> String { "".to_string() }
-fn default_cloudreve_root() -> String { "/".to_string() }
-fn default_terabox_api() -> String { "official".to_string() }
-fn default_ilanzou_site() -> String { "ilanzou".to_string() }
-fn default_ilanzou_root() -> String { "0".to_string() }
+fn default_s3_region() -> String {
+    "us-east-1".to_string()
+}
+fn default_gh_per_page() -> u32 {
+    30
+}
+fn default_true() -> bool {
+    true
+}
+fn default_123link_duration() -> i64 {
+    30
+}
+fn default_link_method() -> String {
+    "download".to_string()
+}
+fn default_s3_expire() -> u64 {
+    4
+}
+fn default_s3_root() -> String {
+    "/".to_string()
+}
+fn default_sftp_root() -> String {
+    "/".to_string()
+}
+fn default_ftp_root() -> String {
+    "/".to_string()
+}
+fn default_virtual_num_file() -> u32 {
+    5
+}
+fn default_bunny_region() -> String {
+    "us-east-1".to_string()
+}
+fn default_kodbox_root() -> String {
+    "".to_string()
+}
+fn default_cloudreve_root() -> String {
+    "/".to_string()
+}
+fn default_terabox_api() -> String {
+    "official".to_string()
+}
+fn default_ilanzou_site() -> String {
+    "ilanzou".to_string()
+}
+fn default_ilanzou_root() -> String {
+    "0".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -635,8 +665,7 @@ impl Store {
 
         let data = match raw {
             Some(blob) => match decrypt(&key, &blob).and_then(|plain| {
-                serde_json::from_slice::<Config>(&plain)
-                    .map_err(|e| format!("JSON 解析失败: {e}"))
+                serde_json::from_slice::<Config>(&plain).map_err(|e| format!("JSON 解析失败: {e}"))
             }) {
                 Ok(cfg) => cfg,
                 Err(e) => panic!(
@@ -660,9 +689,7 @@ impl Store {
         let txn = self.db.begin_write().map_err(io_err)?;
         {
             let mut table = txn.open_table(CONFIG_TABLE).map_err(io_err)?;
-            table
-                .insert(CONFIG_ROW, blob.as_slice())
-                .map_err(io_err)?;
+            table.insert(CONFIG_ROW, blob.as_slice()).map_err(io_err)?;
         }
         txn.commit().map_err(io_err)?;
         Ok(())
@@ -678,7 +705,11 @@ impl Store {
     }
 
     /// 更新面板登录账号/密码（None 表示保持该项不变），加密持久化到数据库
-    pub fn update_web_auth(&self, user: Option<String>, pass: Option<String>) -> std::io::Result<()> {
+    pub fn update_web_auth(
+        &self,
+        user: Option<String>,
+        pass: Option<String>,
+    ) -> std::io::Result<()> {
         let mut data = self.data.lock().unwrap();
         if user.is_some() {
             data.web_user = user;

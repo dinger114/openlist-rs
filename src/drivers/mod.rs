@@ -1,46 +1,46 @@
+pub mod alist_v3;
+pub mod aliyundrive;
 pub mod aliyundrive_open;
+pub mod aliyundrive_share;
 pub mod baidu_netdisk;
+pub mod cloudreve_v4;
+pub mod dropbox;
+pub mod ftp;
+pub mod github_releases;
 pub mod google_drive;
+pub mod google_photo;
+pub mod ilanzou;
+pub mod kodbox;
 pub mod lanzou;
+pub mod link123;
 pub mod local;
 pub mod onedrive;
-pub mod pan115;
-pub mod pan123;
-pub mod pan139;
-pub mod pan189;
-pub mod quark;
-pub mod share123;
-pub mod thunder;
-pub mod webdav;
-pub mod weiyun;
-pub mod s3;
-pub mod sftp;
-pub mod ftp;
-pub mod smb;
-pub mod alist_v3;
-pub mod github_releases;
-pub mod pikpak;
+pub mod onedrive_app;
 pub mod onedrive_share;
-pub mod dropbox;
-pub mod google_photo;
+pub mod openlist_share;
+pub mod pan115;
 pub mod pan115_open;
 pub mod pan115_share;
+pub mod pan123;
 pub mod pan123_open;
-pub mod link123;
-pub mod aliyundrive;
-pub mod aliyundrive_share;
+pub mod pan139;
+pub mod pan189;
+pub mod pikpak;
+pub mod pikpak_share;
+pub mod quark;
 pub mod quark_open;
 pub mod quark_uc_tv;
-pub mod pikpak_share;
-pub mod onedrive_app;
-pub mod openlist_share;
-pub mod virtual_driver;
-pub mod yandex_disk;
+pub mod s3;
 pub mod seafile;
-pub mod kodbox;
-pub mod cloudreve_v4;
+pub mod sftp;
+pub mod share123;
+pub mod smb;
 pub mod terabox;
-pub mod ilanzou;
+pub mod thunder;
+pub mod virtual_driver;
+pub mod webdav;
+pub mod weiyun;
+pub mod yandex_disk;
 
 use crate::config::{Credential, Entry, Store};
 use std::pin::Pin;
@@ -147,7 +147,6 @@ pub enum Driver {
     Ilanzou(ilanzou::Ilanzou),
 }
 
-
 impl Driver {
     /// 由账号构建驱动实例并验证凭据
     pub async fn new(id: &str, cred: &Credential, store: Arc<Store>) -> Result<Self, String> {
@@ -207,7 +206,11 @@ impl Driver {
                 device_id.clone(),
                 store,
             )),
-            Credential::Lanzou { cookie, account, password } => Driver::Lanzou(lanzou::Lanzou::new(
+            Credential::Lanzou {
+                cookie,
+                account,
+                password,
+            } => Driver::Lanzou(lanzou::Lanzou::new(
                 cookie.clone(),
                 account.clone(),
                 password.clone(),
@@ -221,12 +224,10 @@ impl Driver {
                 drive_type.clone(),
                 store,
             )),
-            Credential::Cloud189 { username, password, .. } => {
-                Driver::Cloud189(pan189::Cloud189::new(username.clone(), password.clone()))
-            }
-            Credential::Local { root_path } => {
-                Driver::Local(local::Local::new(root_path.clone()))
-            }
+            Credential::Cloud189 {
+                username, password, ..
+            } => Driver::Cloud189(pan189::Cloud189::new(username.clone(), password.clone())),
+            Credential::Local { root_path } => Driver::Local(local::Local::new(root_path.clone())),
             Credential::Webdav {
                 url,
                 username,
@@ -250,10 +251,7 @@ impl Driver {
             Credential::Weiyun {
                 cookies,
                 root_folder_id,
-            } => Driver::Weiyun(weiyun::Weiyun::new(
-                cookies.clone(),
-                root_folder_id.clone(),
-            )),
+            } => Driver::Weiyun(weiyun::Weiyun::new(cookies.clone(), root_folder_id.clone())),
             Credential::Onedrive {
                 region,
                 is_sharepoint,
@@ -1026,12 +1024,7 @@ impl Driver {
     }
 
     /// 复制（对齐 Go 版 Copy；蓝奏云不支持）
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         match self {
             Driver::Quark(d) | Driver::QuarkUC(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Pan123(d) => d.copy(parent_fid, e, dst_dir_fid).await,

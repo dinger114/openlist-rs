@@ -168,7 +168,10 @@ impl AliyundriveShare {
             req = req.json(&json!({}));
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_str()).unwrap_or("");
         if !code.is_empty() {
             if !retried && (code == "AccessTokenInvalid" || code == "ShareLinkTokenInvalid") {

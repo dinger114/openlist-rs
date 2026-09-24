@@ -2,7 +2,7 @@ use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use base64::Engine;
 use md5::{Digest, Md5};
-use reqwest::{Client, Method, redirect};
+use reqwest::{redirect, Client, Method};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -162,7 +162,10 @@ impl Pan123 {
             .send()
             .await
             .map_err(|e| format!("123 登录请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("登录响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("登录响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 200 {
             let msg = v
@@ -209,15 +212,24 @@ impl Pan123 {
             .request(method.clone(), &url)
             .header("origin", "https://yun.123pan.com")
             .header("referer", "https://yun.123pan.com/")
-            .header("authorization", format!("Bearer {}", self.access_token.lock().unwrap()))
-            .header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) openlist-client")
+            .header(
+                "authorization",
+                format!("Bearer {}", self.access_token.lock().unwrap()),
+            )
+            .header(
+                "user-agent",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) openlist-client",
+            )
             .header("platform", &self.platform)
             .header("app-version", "3");
         if let Some(b) = body.clone() {
             req = req.json(&b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code != 0 {
             if code == 401 && !retried {
@@ -238,7 +250,8 @@ impl Pan123 {
         if self.access_token.lock().unwrap().is_empty() {
             self.login().await?;
         }
-        self.request(Method::GET, USER_INFO, None, None, false).await?;
+        self.request(Method::GET, USER_INFO, None, None, false)
+            .await?;
         Ok(())
     }
 
@@ -294,7 +307,10 @@ impl Pan123 {
                     size: f.get("Size").and_then(|v| v.as_u64()).unwrap_or(0),
                     is_dir: ftype == 1,
                     updated_at: None,
-                    etag: f.get("Etag").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    etag: f
+                        .get("Etag")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
                     s3_key_flag: f
                         .get("S3KeyFlag")
                         .and_then(|v| v.as_str())
@@ -335,7 +351,11 @@ impl Pan123 {
         }
         // Go 版：DownloadUrl 的 query 里若带 params=<base64 url>，解码后才是真实地址
         if let Ok(mut parsed) = url::Url::parse(&download_url) {
-            if let Some(params) = parsed.query_pairs().find(|(k, _)| k == "params").map(|(_, v)| v.to_string()) {
+            if let Some(params) = parsed
+                .query_pairs()
+                .find(|(k, _)| k == "params")
+                .map(|(_, v)| v.to_string())
+            {
                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&params) {
                     if let Ok(real) = String::from_utf8(decoded) {
                         if url::Url::parse(&real).is_ok() {
@@ -374,7 +394,7 @@ impl Pan123 {
                 url: final_url,
                 headers: vec![("Referer".into(), scheme_host)],
                 proxy: false,
-            local_path: None,
+                local_path: None,
             })
         } else {
             Err(format!("123 直链格式异常: {download_url}"))
@@ -427,12 +447,7 @@ impl Pan123 {
     }
 
     /// 对齐 Go 版 Copy()：errs.NotSupport
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
         let _ = e;
         let _ = dst_dir_fid;
@@ -494,7 +509,11 @@ impl Pan123 {
         if reuse || key.is_empty() {
             return Ok(());
         }
-        let upload_id = d.get("UploadId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let upload_id = d
+            .get("UploadId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if upload_id.is_empty() {
             // Go 版此分支用 AWS SDK（AccessKeyId/SecretAccessKey/SessionToken + SigV4）直传，
             // 依赖列表无 sha2/hmac，无法实现 SigV4 签名，明确报错而不是猜测 API
@@ -516,10 +535,26 @@ impl Pan123 {
 
     /// 对齐 Go 版 newUpload()：预签名 URL 分片上传（16MB/片，单批 1 或 10 片），完成后 completeS3
     async fn new_upload(&self, d: &Value, size: u64, tmp: &Path) -> Result<(), String> {
-        let bucket = d.get("Bucket").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let key = d.get("Key").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let upload_id = d.get("UploadId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let storage_node = d.get("StorageNode").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let bucket = d
+            .get("Bucket")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let key = d
+            .get("Key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let upload_id = d
+            .get("UploadId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let storage_node = d
+            .get("StorageNode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let file_id = d.get("FileId").and_then(|v| v.as_i64()).unwrap_or(0);
 
         let chunk_size: u64 = 16 * 1024 * 1024;
@@ -550,7 +585,8 @@ impl Pan123 {
                 let mut last_err = String::new();
                 for attempt in 0..3u64 {
                     if attempt > 0 {
-                        tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1))).await;
+                        tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt - 1)))
+                            .await;
                     }
                     let upload_url = match urls.get(&cur.to_string()) {
                         Some(u) if !u.is_empty() => u.clone(),
@@ -645,7 +681,11 @@ impl Pan123 {
             end,
             use_batch,
         } = args;
-        let path = if use_batch { S3_PRESIGNED_URLS } else { S3_AUTH };
+        let path = if use_batch {
+            S3_PRESIGNED_URLS
+        } else {
+            S3_AUTH
+        };
         let data = json!({
             "StorageNode": storage_node,
             "bucket": bucket,
@@ -654,7 +694,9 @@ impl Pan123 {
             "partNumberStart": start,
             "uploadId": upload_id,
         });
-        let resp = self.request(Method::POST, path, None, Some(data), false).await?;
+        let resp = self
+            .request(Method::POST, path, None, Some(data), false)
+            .await?;
         let map = resp
             .pointer("/data/presignedUrls")
             .and_then(|v| v.as_object())

@@ -206,7 +206,9 @@ impl Dropbox {
     pub async fn validate(&self) -> Result<(), String> {
         self.refresh().await?;
         // get current account for root namespace
-        let v = self.api("/2/users/get_current_account", json!(null)).await?;
+        let v = self
+            .api("/2/users/get_current_account", json!(null))
+            .await?;
         if let Some(ns) = v
             .pointer("/root_info/root_namespace_id")
             .and_then(|x| x.as_str())
@@ -224,11 +226,8 @@ impl Dropbox {
         let mut has_more = true;
         while has_more {
             let v = if let Some(ref c) = cursor {
-                self.api(
-                    "/2/files/list_folder/continue",
-                    json!({ "cursor": c }),
-                )
-                .await?
+                self.api("/2/files/list_folder/continue", json!({ "cursor": c }))
+                    .await?
             } else {
                 self.api(
                     "/2/files/list_folder",
@@ -248,7 +247,11 @@ impl Dropbox {
                 .unwrap_or_default();
             for e in entries {
                 let tag = e.get(".tag").and_then(|t| t.as_str()).unwrap_or("");
-                let name = e.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let name = e
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -398,7 +401,8 @@ impl Dropbox {
 
     pub async fn remove(&self, _parent_fid: &str, e: &Entry) -> Result<(), String> {
         let path = self.resolve(&e.fid);
-        self.api("/2/files/delete_v2", json!({ "path": path })).await?;
+        self.api("/2/files/delete_v2", json!({ "path": path }))
+            .await?;
         Ok(())
     }
 
@@ -427,8 +431,8 @@ impl Dropbox {
             .await
             .map_err(|e| format!("upload_session/start: {e}"))?;
         let start_text = start_resp.text().await.unwrap_or_default();
-        let start_v: Value =
-            serde_json::from_str(&start_text).map_err(|e| format!("start 解析: {e} / {start_text}"))?;
+        let start_v: Value = serde_json::from_str(&start_text)
+            .map_err(|e| format!("start 解析: {e} / {start_text}"))?;
         let session_id = start_v
             .get("session_id")
             .and_then(|s| s.as_str())
@@ -515,10 +519,7 @@ impl Dropbox {
                 format!(r#"{{".tag":"root","root":"{ns}"}}"#),
             );
         }
-        let resp = fin
-            .send()
-            .await
-            .map_err(|e| format!("finish: {e}"))?;
+        let resp = fin.send().await.map_err(|e| format!("finish: {e}"))?;
         let st = resp.status().as_u16();
         if !(200..300).contains(&st) {
             let text = resp.text().await.unwrap_or_default();

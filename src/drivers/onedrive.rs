@@ -10,11 +10,11 @@
 //!   上传：≤4MB PUT /content 直传，更大走 createUploadSession + Content-Range 分片 PUT
 //! - region：global / cn / us / de（对齐 Go 版 onedriveHostMap）
 
-use super::DownloadInfo;
 use super::aliyundrive_open::iso_to_ms;
+use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use reqwest::{Client, Method};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -331,10 +331,7 @@ impl Onedrive {
         if let Some(b) = &body {
             req = req.json(b);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("请求失败: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status().as_u16();
         let text = resp
             .text()
@@ -449,7 +446,12 @@ impl Onedrive {
     }
 
     /// 对齐 Copy：POST src/copy，parentReference 带 driveId + 目标目录 id（异步操作）
-    pub async fn copy(&self, _parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        e: &Entry,
+        dst_dir_fid: &str,
+    ) -> Result<(), String> {
         let dst_dir = self.normalize_dir(dst_dir_fid);
         let dst = self
             .request(Method::GET, &self.meta_url(&dst_dir), false)
@@ -480,7 +482,8 @@ impl Onedrive {
     /// 对齐 Remove：DELETE src
     pub async fn remove(&self, _parent_fid: &str, e: &Entry) -> Result<(), String> {
         let url = self.meta_url(&e.fid);
-        self.request_write(Method::DELETE, &url, None, false).await?;
+        self.request_write(Method::DELETE, &url, None, false)
+            .await?;
         Ok(())
     }
 
@@ -542,10 +545,7 @@ impl Onedrive {
                     return Err(format!("OneDrive 上传失败({code}): {msg}"));
                 }
             }
-            last_err = format!(
-                "OneDrive 上传返回 HTTP {status}: {}",
-                trunc200(&text)
-            );
+            last_err = format!("OneDrive 上传返回 HTTP {status}: {}", trunc200(&text));
             // 非 token 错误不再重试
             break;
         }
@@ -578,12 +578,7 @@ impl Onedrive {
         let mut finish: u64 = 0;
         while finish < size {
             let byte_size = std::cmp::min(size - finish, UPLOAD_CHUNK_SIZE);
-            let range = format!(
-                "bytes {}-{}/{}",
-                finish,
-                finish + byte_size - 1,
-                size
-            );
+            let range = format!("bytes {}-{}/{}", finish, finish + byte_size - 1, size);
             let mut last_err = String::new();
             let mut ok = false;
             for attempt in 0..3 {
@@ -617,10 +612,8 @@ impl Onedrive {
                             last_err = format!("OneDrive 分片上传服务端错误: {status}");
                             continue;
                         }
-                        last_err = format!(
-                            "OneDrive 分片上传返回 HTTP {status}: {}",
-                            trunc200(&text)
-                        );
+                        last_err =
+                            format!("OneDrive 分片上传返回 HTTP {status}: {}", trunc200(&text));
                     }
                     Err(e) => last_err = format!("OneDrive 分片上传失败: {e}"),
                 }
@@ -764,7 +757,10 @@ mod tests {
         assert_eq!(encode_path("/a/b/c.txt"), "/a/b/c.txt");
         // 空格、#、% 需要编码，"/" 保留
         assert_eq!(encode_path("/my docs/a#b%.mp4"), "/my%20docs/a%23b%25.mp4");
-        assert_eq!(encode_path("/中文/名.txt"), "/%E4%B8%AD%E6%96%87/%E5%90%8D.txt");
+        assert_eq!(
+            encode_path("/中文/名.txt"),
+            "/%E4%B8%AD%E6%96%87/%E5%90%8D.txt"
+        );
     }
 
     #[test]

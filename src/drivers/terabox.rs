@@ -245,8 +245,15 @@ impl Terabox {
                 .and_then(|i| i.as_i64())
                 .unwrap_or(0)
                 .to_string();
-            let path = f.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
-            let mtime = f.get("server_mtime").and_then(|m| m.as_i64()).map(|s| s * 1000);
+            let path = f
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mtime = f
+                .get("server_mtime")
+                .and_then(|m| m.as_i64())
+                .map(|s| s * 1000);
             out.push(Entry {
                 fid: fs_id,
                 name,
@@ -467,7 +474,10 @@ impl Terabox {
         let dest = self.resolve(dst_dir_fid);
         self.manage(
             "move",
-            format!("[{{\"path\":\"{path}\",\"dest\":\"{dest}\",\"newname\":\"{}\"}}]", e.name),
+            format!(
+                "[{{\"path\":\"{path}\",\"dest\":\"{dest}\",\"newname\":\"{}\"}}]",
+                e.name
+            ),
         )
         .await
     }
@@ -482,7 +492,10 @@ impl Terabox {
         let dest = self.resolve(dst_dir_fid);
         self.manage(
             "copy",
-            format!("[{{\"path\":\"{path}\",\"dest\":\"{dest}\",\"newname\":\"{}\"}}]", e.name),
+            format!(
+                "[{{\"path\":\"{path}\",\"dest\":\"{dest}\",\"newname\":\"{}\"}}]",
+                e.name
+            ),
         )
         .await
     }

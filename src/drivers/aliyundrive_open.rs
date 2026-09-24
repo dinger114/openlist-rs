@@ -183,11 +183,13 @@ impl AliyundriveOpen {
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status();
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_str()).unwrap_or("");
         if !code.is_empty() {
-            if !retried && (TOKEN_EXPIRED_CODES.contains(&code) || self.access_token().is_empty())
-            {
+            if !retried && (TOKEN_EXPIRED_CODES.contains(&code) || self.access_token().is_empty()) {
                 self.refresh_token().await?;
                 return Box::pin(self.request(Method::POST, uri, body, true)).await;
             }
@@ -243,7 +245,12 @@ impl AliyundriveOpen {
                 "parent_file_id": parent_file_id,
             });
             let resp = self
-                .request(Method::POST, "/adrive/v1.0/openFile/list", Some(body), false)
+                .request(
+                    Method::POST,
+                    "/adrive/v1.0/openFile/list",
+                    Some(body),
+                    false,
+                )
                 .await?;
             let items = resp
                 .get("items")
@@ -261,7 +268,11 @@ impl AliyundriveOpen {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    name: f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    name: f
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     size: f.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
                     is_dir: f.get("type").and_then(|v| v.as_str()) == Some("folder"),
                     updated_at,
@@ -329,8 +340,13 @@ impl AliyundriveOpen {
             "type": "folder",
             "check_name_mode": "refuse",
         });
-        self.request(Method::POST, "/adrive/v1.0/openFile/create", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v1.0/openFile/create",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -342,8 +358,13 @@ impl AliyundriveOpen {
             "file_id": e.fid,
             "name": new_name,
         });
-        self.request(Method::POST, "/adrive/v1.0/openFile/update", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v1.0/openFile/update",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -361,8 +382,13 @@ impl AliyundriveOpen {
             "to_parent_file_id": norm_fid(dst_dir_fid),
             "check_name_mode": "ignore",
         });
-        self.request(Method::POST, "/adrive/v1.0/openFile/move", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v1.0/openFile/move",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -380,8 +406,13 @@ impl AliyundriveOpen {
             "to_parent_file_id": norm_fid(dst_dir_fid),
             "auto_rename": false,
         });
-        self.request(Method::POST, "/adrive/v1.0/openFile/copy", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v1.0/openFile/copy",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -548,8 +579,13 @@ impl AliyundriveOpen {
             "file_id": file_id,
             "upload_id": upload_id,
         });
-        self.request(Method::POST, "/adrive/v1.0/openFile/complete", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v1.0/openFile/complete",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -568,7 +604,12 @@ impl AliyundriveOpen {
             "upload_id": upload_id,
         });
         let resp = self
-            .request(Method::POST, "/adrive/v1.0/openFile/getUploadUrl", Some(body), false)
+            .request(
+                Method::POST,
+                "/adrive/v1.0/openFile/getUploadUrl",
+                Some(body),
+                false,
+            )
             .await?;
         Ok(resp
             .get("part_info_list")
@@ -615,11 +656,7 @@ fn sub_of(token: &str) -> String {
         .decode(segs[1])
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .and_then(|v| {
-            v.get("sub")
-                .and_then(|s| s.as_str())
-                .map(|s| s.to_string())
-        })
+        .and_then(|v| v.get("sub").and_then(|s| s.as_str()).map(|s| s.to_string()))
         .unwrap_or_default()
 }
 
@@ -683,8 +720,8 @@ fn proof_range(input: &str, size: u64) -> Result<(u64, u64), String> {
         return Ok((0, 0));
     }
     let md5hex = format!("{:x}", md5::Md5::digest(input.as_bytes()));
-    let tmp_int = u64::from_str_radix(&md5hex[0..16], 16)
-        .map_err(|e| format!("计算 proof 区间失败: {e}"))?;
+    let tmp_int =
+        u64::from_str_radix(&md5hex[0..16], 16).map_err(|e| format!("计算 proof 区间失败: {e}"))?;
     let index = tmp_int % size;
     let start = index;
     let end = std::cmp::min(index + 8, size);
@@ -788,7 +825,11 @@ async fn spool_and_sha1(
     f.flush()
         .await
         .map_err(|e| format!("阿里云盘临时文件落盘失败: {e}"))?;
-    Ok((total, hex::encode(pre.finalize()), hex::encode(full.finalize())))
+    Ok((
+        total,
+        hex::encode(pre.finalize()),
+        hex::encode(full.finalize()),
+    ))
 }
 
 /// 按字符截断，避免多字节字符串按字节切片 panic

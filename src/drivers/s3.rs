@@ -147,17 +147,28 @@ impl S3 {
                 urlencoding_encode(&prefix)
             );
             if let Some(ref token) = continuation {
-                qs.push_str(&format!("&continuation-token={}", urlencoding_encode(token)));
+                qs.push_str(&format!(
+                    "&continuation-token={}",
+                    urlencoding_encode(token)
+                ));
             }
             let (status, body) = self
                 .signed_request("GET", "", &qs, b"", "application/xml")
                 .await?;
             if !(200..300).contains(&status) {
-                return Err(format!("S3 ListObjects 失败 ({status}): {}", truncate(&body, 400)));
+                return Err(format!(
+                    "S3 ListObjects 失败 ({status}): {}",
+                    truncate(&body, 400)
+                ));
             }
             // 解析 CommonPrefixes + Contents（容错正则）
             for p in extract_xml_tags(&body, "Prefix") {
-                let name = p.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
+                let name = p
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -192,7 +203,8 @@ impl S3 {
                 let size: u64 = extract_xml_tag(&obj, "Size")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
-                let updated_at = extract_xml_tag(&obj, "LastModified").and_then(|s| parse_rfc3339_ms(&s));
+                let updated_at =
+                    extract_xml_tag(&obj, "LastModified").and_then(|s| parse_rfc3339_ms(&s));
                 let fid = self.key_to_fid(&key);
                 out.push(Entry {
                     fid,
@@ -252,7 +264,10 @@ impl S3 {
             .signed_request("PUT", &key, "", b"", "application/octet-stream")
             .await?;
         if !(200..300).contains(&status) {
-            return Err(format!("S3 创建目录失败 ({status}): {}", truncate(&body, 200)));
+            return Err(format!(
+                "S3 创建目录失败 ({status}): {}",
+                truncate(&body, 200)
+            ));
         }
         Ok(())
     }
@@ -472,7 +487,11 @@ impl S3 {
             ));
         }
         headers.sort_by(|a, b| a.0.cmp(&b.0));
-        let signed_headers: String = headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
+        let signed_headers: String = headers
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
+            .join(";");
         let canonical_headers: String = headers
             .iter()
             .map(|(k, v)| format!("{k}:{}\n", v.trim()))
@@ -485,12 +504,8 @@ impl S3 {
             "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
             hex_sha256(canonical_request.as_bytes())
         );
-        let signing_key = get_signature_key(
-            &self.secret_access_key,
-            date_stamp,
-            &self.region,
-            "s3",
-        );
+        let signing_key =
+            get_signature_key(&self.secret_access_key, date_stamp, &self.region, "s3");
         let signature = hex_hmac(&signing_key, string_to_sign.as_bytes());
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
@@ -522,10 +537,7 @@ impl S3 {
         if method == "PUT" || method == "POST" {
             req = req.body(body.to_vec());
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("S3 请求失败: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("S3 请求失败: {e}"))?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         Ok((status, text))
@@ -565,7 +577,11 @@ impl S3 {
             ));
         }
         headers.sort_by(|a, b| a.0.cmp(&b.0));
-        let signed_headers: String = headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
+        let signed_headers: String = headers
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
+            .join(";");
         let canonical_headers: String = headers
             .iter()
             .map(|(k, v)| format!("{k}:{}\n", v.trim()))
@@ -617,20 +633,21 @@ impl S3 {
         let (host, canonical_uri) = if !self.custom_host.is_empty() {
             // 自定义域名：按 path 拼接
             let ch = self.custom_host.trim();
-            let (scheme_host, path_prefix) = if ch.starts_with("http://") || ch.starts_with("https://") {
-                let u = url::Url::parse(ch).map_err(|e| e.to_string())?;
-                let h = match u.port() {
-                    Some(p) => format!("{}:{p}", u.host_str().unwrap_or("")),
-                    None => u.host_str().unwrap_or("").to_string(),
+            let (scheme_host, path_prefix) =
+                if ch.starts_with("http://") || ch.starts_with("https://") {
+                    let u = url::Url::parse(ch).map_err(|e| e.to_string())?;
+                    let h = match u.port() {
+                        Some(p) => format!("{}:{p}", u.host_str().unwrap_or("")),
+                        None => u.host_str().unwrap_or("").to_string(),
+                    };
+                    let scheme = u.scheme().to_string();
+                    (
+                        format!("{scheme}://{h}"),
+                        u.path().trim_end_matches('/').to_string(),
+                    )
+                } else {
+                    (format!("https://{ch}"), String::new())
                 };
-                let scheme = u.scheme().to_string();
-                (
-                    format!("{scheme}://{h}"),
-                    u.path().trim_end_matches('/').to_string(),
-                )
-            } else {
-                (format!("https://{ch}"), String::new())
-            };
             let path = if key.is_empty() {
                 format!("{path_prefix}/")
             } else {
@@ -685,7 +702,9 @@ impl S3 {
         } else {
             let u = self.object_url(key);
             // strip path for rebuild — object_url already has path
-            return Ok(format!("{u}?{canonical_querystring}&X-Amz-Signature={signature}"));
+            return Ok(format!(
+                "{u}?{canonical_querystring}&X-Amz-Signature={signature}"
+            ));
         };
         let path = if key.is_empty() {
             String::new()
@@ -797,14 +816,10 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let open2 = format!("<{tag} ");
     let close = format!("</{tag}>");
-    let start = xml
-        .find(&open)
-        .map(|i| i + open.len())
-        .or_else(|| {
-            xml.find(&open2).and_then(|i| {
-                xml[i..].find('>').map(|j| i + j + 1)
-            })
-        })?;
+    let start = xml.find(&open).map(|i| i + open.len()).or_else(|| {
+        xml.find(&open2)
+            .and_then(|i| xml[i..].find('>').map(|j| i + j + 1))
+    })?;
     let end = xml[start..].find(&close)? + start;
     Some(xml[start..end].trim().to_string())
 }

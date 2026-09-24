@@ -17,7 +17,7 @@ use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use md5::Digest;
 use reqwest::{Client, Method};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -222,7 +222,10 @@ impl Thunder {
                 return Err("迅雷未登录（token 为空）".into());
             };
             req = req
-                .header("Authorization", format!("{} {}", t.token_type, t.access_token))
+                .header(
+                    "Authorization",
+                    format!("{} {}", t.token_type, t.access_token),
+                )
                 .header(
                     "x-captcha-token",
                     self.captcha_token.lock().unwrap().clone(),
@@ -235,7 +238,10 @@ impl Thunder {
             req = req.json(b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let err_code = v.get("error_code").and_then(|x| x.as_i64()).unwrap_or(0);
         let err_msg = v
             .get("error")
@@ -589,7 +595,11 @@ impl Thunder {
                     .and_then(|v| v.as_str())
                     .and_then(super::aliyundrive_open::iso_to_ms);
                 files.push(Entry {
-                    fid: f.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    fid: f
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     name: f
                         .get("name")
                         .and_then(|v| v.as_str())
@@ -699,12 +709,7 @@ impl Thunder {
     }
 
     /// 对齐 Copy()：POST /drive/v1/files:batchCopy
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
         let url = format!("{FILE_API_URL}:batchCopy");
         let body = json!({
@@ -722,8 +727,15 @@ impl Thunder {
         let _ = parent_fid;
         let url = format!("{FILE_API_URL}/{}/trash", e.fid);
         let query = vec![("space".into(), String::new())];
-        self.request(Method::PATCH, &url, Some(&query), Some(json!({})), true, false)
-            .await?;
+        self.request(
+            Method::PATCH,
+            &url,
+            Some(&query),
+            Some(json!({})),
+            true,
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -736,7 +748,11 @@ impl Thunder {
         let tmp = temp_file_path();
         let _guard = TempFileGuard(tmp.clone());
         let actual_size = spool_to_file(input.reader, &tmp).await?;
-        let size = if input.size != 0 { input.size } else { actual_size };
+        let size = if input.size != 0 {
+            input.size
+        } else {
+            actual_size
+        };
         // 2. GCID（对齐 getGcid()）
         let gcid = file_gcid(&tmp, size).await?;
         // 3. 创建上传任务
@@ -852,10 +868,7 @@ impl Thunder {
         canonical_headers.push_str(&format!("x-amz-date:{amzdate}\n"));
         let mut signed_headers = "host;x-amz-content-sha256;x-amz-date".to_string();
         if !p.security_token.is_empty() {
-            canonical_headers.push_str(&format!(
-                "x-amz-security-token:{}\n",
-                p.security_token
-            ));
+            canonical_headers.push_str(&format!("x-amz-security-token:{}\n", p.security_token));
             signed_headers.push_str(";x-amz-security-token");
         }
         let canonical_uri = format!("/{}", s3_url_encode(key, false));
@@ -1143,12 +1156,20 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     for chunk in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
         for (i, wi) in w.iter_mut().enumerate().take(16) {
-            *wi = u32::from_be_bytes([chunk[4 * i], chunk[4 * i + 1], chunk[4 * i + 2], chunk[4 * i + 3]]);
+            *wi = u32::from_be_bytes([
+                chunk[4 * i],
+                chunk[4 * i + 1],
+                chunk[4 * i + 2],
+                chunk[4 * i + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let (mut a, mut b, mut c, mut d, mut e, mut f2, mut g, mut hh) =
             (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
@@ -1309,7 +1330,10 @@ mod tests {
     fn test_hmac_sha256() {
         // RFC 4231 test case 2
         assert_eq!(
-            hex(&hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog")),
+            hex(&hmac_sha256(
+                b"key",
+                b"The quick brown fox jumps over the lazy dog"
+            )),
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
         );
     }

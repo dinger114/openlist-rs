@@ -158,7 +158,10 @@ impl CloudreveV4 {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
-            return Err(format!("Cloudreve V4 请求失败 ({status}): {}", truncate(&text, 300)));
+            return Err(format!(
+                "Cloudreve V4 请求失败 ({status}): {}",
+                truncate(&text, 300)
+            ));
         }
         serde_json::from_str(&text).map_err(|e| format!("Cloudreve V4 响应解析失败: {e}"))
     }
@@ -180,7 +183,9 @@ impl CloudreveV4 {
         if code == 0 {
             return Ok(v.get("data").cloned().unwrap_or(Value::Null));
         }
-        if (code == CODE_LOGIN_REQUIRED || code == CODE_CREDENTIAL_INVALID) && path != "/session/token/refresh" {
+        if (code == CODE_LOGIN_REQUIRED || code == CODE_CREDENTIAL_INVALID)
+            && path != "/session/token/refresh"
+        {
             self.refresh_token().await?;
             let v2 = send().await?;
             let code2 = v2.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
@@ -214,7 +219,10 @@ impl CloudreveV4 {
         if prepare.get("code").and_then(|c| c.as_i64()).unwrap_or(0) != 0 {
             return Err(format!(
                 "Cloudreve V4 登录准备失败: {}",
-                prepare.get("msg").and_then(|m| m.as_str()).unwrap_or("未知错误")
+                prepare
+                    .get("msg")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("未知错误")
             ));
         }
         let data = prepare.get("data").cloned().unwrap_or(Value::Null);
@@ -387,8 +395,16 @@ impl CloudreveV4 {
         let parent_rel = normalize_user_fid(parent_fid);
         let mut out = Vec::new();
         for f in files {
-            let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-            let path = f.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+            let name = f
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            let path = f
+                .get("path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string();
             if name.is_empty() || path.is_empty() {
                 continue;
             }
@@ -467,7 +483,11 @@ impl CloudreveV4 {
 
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
         let parent_uri = self.resolve(parent_fid);
-        let uri = format!("{}/{}", parent_uri.trim_end_matches('/'), name.trim_matches('/'));
+        let uri = format!(
+            "{}/{}",
+            parent_uri.trim_end_matches('/'),
+            name.trim_matches('/')
+        );
         self.request(
             reqwest::Method::POST,
             "/file/create",
@@ -622,7 +642,10 @@ impl CloudreveV4 {
             .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string();
-        let chunk_size = session.get("chunk_size").and_then(|c| c.as_i64()).unwrap_or(0);
+        let chunk_size = session
+            .get("chunk_size")
+            .and_then(|c| c.as_i64())
+            .unwrap_or(0);
         let relay = session
             .pointer("/storage_policy/relay")
             .and_then(|b| b.as_bool())
@@ -637,7 +660,11 @@ impl CloudreveV4 {
                 "Cloudreve V4 暂不支持 {policy_type} 存储策略上传，请使用本地存储策略或开启中转"
             ));
         }
-        let default_chunk = if chunk_size > 0 { chunk_size } else { input.size as i64 };
+        let default_chunk = if chunk_size > 0 {
+            chunk_size
+        } else {
+            input.size as i64
+        };
         // 3. 缓冲后分片上传
         let mut buf = Vec::with_capacity(input.size as usize);
         let mut tmp = vec![0u8; 64 * 1024];
@@ -687,7 +714,10 @@ impl CloudreveV4 {
                     let status = resp.status().as_u16();
                     let text = resp.text().await.unwrap_or_default();
                     let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
-                    let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(if status < 400 { 0 } else { status as i64 });
+                    let code = v
+                        .get("code")
+                        .and_then(|c| c.as_i64())
+                        .unwrap_or(if status < 400 { 0 } else { status as i64 });
                     if code == 0 {
                         return Ok(());
                     }

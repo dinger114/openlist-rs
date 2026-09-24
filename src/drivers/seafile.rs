@@ -79,16 +79,23 @@ impl Seafile {
         let resp = self
             .http
             .post(&url)
-            .form(&[("username", self.username.as_str()), ("password", self.password.as_str())])
+            .form(&[
+                ("username", self.username.as_str()),
+                ("password", self.password.as_str()),
+            ])
             .send()
             .await
             .map_err(|e| format!("Seafile 登录请求失败: {e}"))?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
-            return Err(format!("Seafile 获取 token 失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 获取 token 失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
-        let v: Value = serde_json::from_str(&text).map_err(|e| format!("Seafile 响应解析失败: {e}"))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("Seafile 响应解析失败: {e}"))?;
         let token = v
             .get("token")
             .and_then(|t| t.as_str())
@@ -215,7 +222,10 @@ impl Seafile {
             return Err(format!("Seafile 资料库 {repo_id} 信息获取失败 ({status})"));
         }
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
-        let encrypted = v.get("encrypted").and_then(|b| b.as_bool()).unwrap_or(false);
+        let encrypted = v
+            .get("encrypted")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
         if !encrypted {
             return Ok(());
         }
@@ -250,8 +260,16 @@ impl Seafile {
             let mut out = Vec::new();
             if let Some(items) = arr.as_array() {
                 for f in items {
-                    let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let id = f.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                    let name = f
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let id = f
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if name.is_empty() || id.is_empty() {
                         continue;
                     }
@@ -289,14 +307,25 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 列表失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 列表失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         let arr: Value = serde_json::from_str(&text).map_err(|e| format!("解析失败: {e}"))?;
-        let base = if path == "/" { "" } else { path.trim_end_matches('/') };
+        let base = if path == "/" {
+            ""
+        } else {
+            path.trim_end_matches('/')
+        };
         let mut out = Vec::new();
         if let Some(items) = arr.as_array() {
             for f in items {
-                let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                let name = f
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -334,10 +363,7 @@ impl Seafile {
             .request(
                 reqwest::Method::GET,
                 &format!("/api2/repos/{repo}/file/"),
-                Some(vec![
-                    ("p".into(), path),
-                    ("reuse".into(), "1".into()),
-                ]),
+                Some(vec![("p".into(), path), ("reuse".into(), "1".into())]),
                 None,
             )
             .await?;
@@ -371,7 +397,10 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 创建文件夹失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 创建文件夹失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -390,7 +419,10 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 重命名失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 重命名失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -416,7 +448,10 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 移动失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 移动失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -442,7 +477,10 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 复制失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 复制失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -458,7 +496,10 @@ impl Seafile {
             )
             .await?;
         if status >= 400 {
-            return Err(format!("Seafile 删除失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 删除失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -519,7 +560,10 @@ impl Seafile {
         let status = resp.status().as_u16();
         if status >= 400 {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Seafile 上传失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Seafile 上传失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }

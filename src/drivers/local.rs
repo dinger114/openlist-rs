@@ -41,7 +41,8 @@ impl Local {
 
     pub fn list(&self, parent_fid: &str) -> Result<Vec<Entry>, String> {
         let dir = self.resolve_dir(parent_fid);
-        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读取目录 {} 失败: {e}", dir.display()))?;
+        let rd =
+            std::fs::read_dir(&dir).map_err(|e| format!("读取目录 {} 失败: {e}", dir.display()))?;
         let mut out = Vec::new();
         for entry in rd {
             let Ok(entry) = entry else { continue };
@@ -135,12 +136,7 @@ impl Local {
     }
 
     /// 对齐 Move：跨目录 rename；跨盘符/卷时降级为 copy + delete
-    pub fn move_entry(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub fn move_entry(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let src = PathBuf::from(&e.fid);
         let dst_dir = self.resolve_dir(dst_dir_fid);
         let dst = dst_dir.join(&e.name);
@@ -238,6 +234,9 @@ mod tests {
         let d = Local::new("/tmp/root".into());
         assert_eq!(d.resolve_dir("0"), PathBuf::from("/tmp/root"));
         assert_eq!(d.resolve_dir(""), PathBuf::from("/tmp/root"));
-        assert_eq!(d.resolve_dir("/tmp/root/sub"), PathBuf::from("/tmp/root/sub"));
+        assert_eq!(
+            d.resolve_dir("/tmp/root/sub"),
+            PathBuf::from("/tmp/root/sub")
+        );
     }
 }

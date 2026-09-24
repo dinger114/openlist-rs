@@ -116,10 +116,7 @@ fn parse_personal_time(t: &str) -> Option<i64> {
     } else {
         0 // Z 或缺失按 UTC 处理
     };
-    let base = days_from_civil(y, m, d) * 86_400
-        + hh as i64 * 3600
-        + mm as i64 * 60
-        + ss as i64
+    let base = days_from_civil(y, m, d) * 86_400 + hh as i64 * 3600 + mm as i64 * 60 + ss as i64
         - offset_secs;
     Some(base * 1000 + ms as i64)
 }
@@ -232,8 +229,8 @@ impl Yun139 {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(auth.trim())
             .map_err(|e| format!("139 authorization 解码失败: {e}"))?;
-        let decoded = String::from_utf8(decoded)
-            .map_err(|e| format!("139 authorization 非 UTF-8: {e}"))?;
+        let decoded =
+            String::from_utf8(decoded).map_err(|e| format!("139 authorization 非 UTF-8: {e}"))?;
         let splits: Vec<&str> = decoded.split(':').collect();
         if splits.len() < 3 {
             return Err("139 authorization 格式非法（冒号段不足 3 段）".into());
@@ -292,7 +289,10 @@ impl Yun139 {
             .send()
             .await
             .map_err(|e| format!("139 token 刷新请求失败: {e}"))?;
-        let text = resp.text().await.map_err(|e| format!("139 刷新响应读取失败: {e}"))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("139 刷新响应读取失败: {e}"))?;
         let tag = |name: &str| -> Option<String> {
             let re = format!("<{name}>(.*?)</{name}>");
             regex::Regex::new(&re)
@@ -318,7 +318,13 @@ impl Yun139 {
     /// 统一请求封装：
     /// - style="old"：旧版头部（https://yun.139.com / 路由策略）
     /// - style="new"：新版个人云头部（路由策略返回的 host）
-    async fn api_request(&self, style: &str, base: &str, pathname: &str, data: Value) -> Result<Value, String> {
+    async fn api_request(
+        &self,
+        style: &str,
+        base: &str,
+        pathname: &str,
+        data: Value,
+    ) -> Result<Value, String> {
         let body = serde_json::to_string(&data).map_err(|e| format!("139 序列化失败: {e}"))?;
         let (y, m, d, hh, mm, ss) = cn_now_parts();
         let ts = format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02}");
@@ -327,7 +333,10 @@ impl Yun139 {
         let auth = self.authorization.lock().unwrap().clone();
         let url = format!("{base}{pathname}");
 
-        let mut req = self.http.post(&url).header("Accept", "application/json, text/plain, */*");
+        let mut req = self
+            .http
+            .post(&url)
+            .header("Accept", "application/json, text/plain, */*");
         if style == "new" {
             req = req
                 .header("Authorization", format!("Basic {auth}"))
@@ -338,7 +347,10 @@ impl Yun139 {
                 .header("Mcloud-Route", "001")
                 .header("Mcloud-Sign", format!("{ts},{rand_str},{sign}"))
                 .header("Mcloud-Version", "7.14.0")
-                .header("x-DeviceInfo", "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||")
+                .header(
+                    "x-DeviceInfo",
+                    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
+                )
                 .header("x-huawei-channelSrc", "10000034")
                 .header("x-inner-ntwk", "2")
                 .header("x-m4c-caller", "PC")
@@ -347,7 +359,10 @@ impl Yun139 {
                 .header("X-Yun-Api-Version", "v1")
                 .header("X-Yun-App-Channel", "10000034")
                 .header("X-Yun-Channel-Source", "10000034")
-                .header("X-Yun-Client-Info", "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||")
+                .header(
+                    "X-Yun-Client-Info",
+                    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||dW5kZWZpbmVk||",
+                )
                 .header("X-Yun-Module-Type", "100")
                 .header("X-Yun-Svc-Type", "1");
         } else {
@@ -360,7 +375,10 @@ impl Yun139 {
                 .header("mcloud-version", "7.14.0")
                 .header("Origin", "https://yun.139.com")
                 .header("Referer", "https://yun.139.com/w/")
-                .header("x-DeviceInfo", "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||")
+                .header(
+                    "x-DeviceInfo",
+                    "||9|7.14.0|chrome|120.0.0.0|||windows 10||zh-CN|||",
+                )
                 .header("x-huawei-channelSrc", "10000034")
                 .header("x-inner-ntwk", "2")
                 .header("x-m4c-caller", "PC")
@@ -404,10 +422,18 @@ impl Yun139 {
             "modAddrType": 1,
         });
         let v = self
-            .api_request("old", "https://user-njs.yun.139.com", "/user/route/qryRoutePolicy", data)
+            .api_request(
+                "old",
+                "https://user-njs.yun.139.com",
+                "/user/route/qryRoutePolicy",
+                data,
+            )
             .await?;
         let mut host = String::new();
-        if let Some(list) = v.pointer("/data/routePolicyList").and_then(|l| l.as_array()) {
+        if let Some(list) = v
+            .pointer("/data/routePolicyList")
+            .and_then(|l| l.as_array())
+        {
             for item in list {
                 if item.get("modName").and_then(|m| m.as_str()) == Some("personal") {
                     host = item
@@ -482,8 +508,16 @@ impl Yun139 {
             for item in &items {
                 let is_dir = item.get("type").and_then(|t| t.as_str()) == Some("folder");
                 files.push(Entry {
-                    fid: item.get("fileId").and_then(|f| f.as_str()).unwrap_or("").to_string(),
-                    name: item.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                    fid: item
+                        .get("fileId")
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    name: item
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     size: item.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
                     is_dir,
                     updated_at: item
@@ -527,12 +561,23 @@ impl Yun139 {
                     data,
                 )
                 .await?;
-            let result = v.pointer("/data/getDiskResult").cloned().unwrap_or(Value::Null);
+            let result = v
+                .pointer("/data/getDiskResult")
+                .cloned()
+                .unwrap_or(Value::Null);
             if let Some(list) = result.get("catalogList").and_then(|l| l.as_array()) {
                 for c in list {
                     files.push(Entry {
-                        fid: c.get("catalogID").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        name: c.get("catalogName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        fid: c
+                            .get("catalogID")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name: c
+                            .get("catalogName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         size: 0,
                         is_dir: true,
                         updated_at: c
@@ -549,15 +594,26 @@ impl Yun139 {
             if let Some(list) = result.get("contentList").and_then(|l| l.as_array()) {
                 for c in list {
                     files.push(Entry {
-                        fid: c.get("contentID").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        name: c.get("contentName").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        fid: c
+                            .get("contentID")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name: c
+                            .get("contentName")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         size: c.get("contentSize").and_then(|v| v.as_u64()).unwrap_or(0),
                         is_dir: false,
                         updated_at: c
                             .get("updateTime")
                             .and_then(|v| v.as_str())
                             .and_then(parse_cn_compact_time),
-                        etag: c.get("digest").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        etag: c
+                            .get("digest")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
                         s3_key_flag: None,
                         file_type: None,
                         extra: None,
@@ -580,15 +636,28 @@ impl Yun139 {
     async fn personal_link(&self, fid: &str) -> Result<String, String> {
         let host = self.personal_host.lock().unwrap().clone();
         let v = self
-            .api_request("new", &host, "/file/getDownloadUrl", json!({ "fileId": fid }))
+            .api_request(
+                "new",
+                &host,
+                "/file/getDownloadUrl",
+                json!({ "fileId": fid }),
+            )
             .await?;
-        let cdn_url = v.pointer("/data/cdnUrl").and_then(|u| u.as_str()).unwrap_or("");
+        let cdn_url = v
+            .pointer("/data/cdnUrl")
+            .and_then(|u| u.as_str())
+            .unwrap_or("");
         if !cdn_url.is_empty()
-            && v.pointer("/data/cdnSwitch").and_then(|s| s.as_bool()).unwrap_or(false)
+            && v.pointer("/data/cdnSwitch")
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false)
         {
             return Ok(cdn_url.to_string());
         }
-        let url = v.pointer("/data/url").and_then(|u| u.as_str()).unwrap_or("");
+        let url = v
+            .pointer("/data/url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("");
         if url.is_empty() {
             return Err("139 未返回下载直链".into());
         }
@@ -781,12 +850,7 @@ impl Yun139 {
     }
 
     /// 对齐 Go Copy()：personal_new 走 /file/batchCopy，personal 走 createBatchOprTask(actionType=309)
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
         let dst = self.normalize_fid(dst_dir_fid);
         if self.drive_type == "personal_new" {
@@ -884,7 +948,11 @@ impl Yun139 {
     }
 
     /// 对齐 Go Put() 的新版个人云路径（MetaPersonalNew）
-    async fn put_personal_new(&self, dst_dir_fid: &str, input: super::PutInput) -> Result<(), String> {
+    async fn put_personal_new(
+        &self,
+        dst_dir_fid: &str,
+        input: super::PutInput,
+    ) -> Result<(), String> {
         let dst = self.normalize_fid(dst_dir_fid);
         let host = self.get_personal_host()?;
         let tmp_path = temp_file_path();
@@ -925,8 +993,16 @@ impl Yun139 {
         if d.get("exist").and_then(|v| v.as_bool()).unwrap_or(false) {
             return Ok(());
         }
-        let file_id = d.get("fileId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let upload_id = d.get("uploadId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let file_id = d
+            .get("fileId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let upload_id = d
+            .get("uploadId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if let Some(upload_parts) = d.get("partInfos").and_then(|v| v.as_array()) {
             if !upload_parts.is_empty() {
                 // 先上传创建响应里返回的前 100 个分片
@@ -1052,7 +1128,11 @@ impl Yun139 {
     }
 
     /// 对齐 Go Put() 的旧版个人云路径（MetaPersonal，ReportRealSize 默认 true）
-    async fn put_personal_old(&self, dst_dir_fid: &str, input: super::PutInput) -> Result<(), String> {
+    async fn put_personal_old(
+        &self,
+        dst_dir_fid: &str,
+        input: super::PutInput,
+    ) -> Result<(), String> {
         let dst = self.normalize_fid(dst_dir_fid);
         let tmp_path = temp_file_path();
         let _guard = TempFileGuard(tmp_path.clone());
@@ -1263,7 +1343,9 @@ async fn spool_to_temp(
             .map_err(|e| format!("139 写入临时文件失败: {e}"))?;
         total += n as u64;
     }
-    f.flush().await.map_err(|e| format!("139 临时文件落盘失败: {e}"))?;
+    f.flush()
+        .await
+        .map_err(|e| format!("139 临时文件落盘失败: {e}"))?;
     Ok(total)
 }
 
@@ -1301,7 +1383,9 @@ async fn spool_inner(
         hasher.update(&buf[..n]);
         total += n as u64;
     }
-    f.flush().await.map_err(|e| format!("139 临时文件落盘失败: {e}"))?;
+    f.flush()
+        .await
+        .map_err(|e| format!("139 临时文件落盘失败: {e}"))?;
     Ok(total)
 }
 
@@ -1375,8 +1459,8 @@ impl Sha256 {
     fn new() -> Self {
         Sha256 {
             state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+                0x5be0cd19,
             ],
             buf: [0u8; 64],
             buf_len: 0,

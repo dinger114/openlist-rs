@@ -50,7 +50,10 @@ impl AlistV3 {
                     return Err(format!("AList 登录后仍失败: {}", truncate(&body2, 200)));
                 }
             } else {
-                return Err(format!("AList 需要 token 或 username/password: {}", truncate(&body, 200)));
+                return Err(format!(
+                    "AList 需要 token 或 username/password: {}",
+                    truncate(&body, 200)
+                ));
             }
         } else if code != 200 {
             return Err(format!("AList 连接失败 ({code}): {}", truncate(&body, 200)));
@@ -76,7 +79,10 @@ impl AlistV3 {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
-        let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(status as i64);
+        let code = v
+            .get("code")
+            .and_then(|c| c.as_i64())
+            .unwrap_or(status as i64);
         if code != 200 {
             return Err(format!(
                 "AList 登录失败: {}",
@@ -95,7 +101,12 @@ impl AlistV3 {
         Ok(())
     }
 
-    async fn api(&self, method: &str, path: &str, body: Option<Value>) -> Result<(u16, String), String> {
+    async fn api(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<(u16, String), String> {
         let url = format!("{}/api{path}", self.address);
         let token = self.token.lock().await.clone();
         let mut req = match method {
@@ -138,7 +149,10 @@ impl AlistV3 {
             self.login().await?;
             let (code2, text2) = self.api(method, path, body).await?;
             if code2 != 200 {
-                return Err(format!("AList API 失败 ({code2}): {}", truncate(&text2, 300)));
+                return Err(format!(
+                    "AList API 失败 ({code2}): {}",
+                    truncate(&text2, 300)
+                ));
             }
             return serde_json::from_str(&text2).map_err(|e| format!("解析失败: {e}"));
         }
@@ -182,7 +196,11 @@ impl AlistV3 {
             .unwrap_or_default();
         let mut out = Vec::new();
         for f in content {
-            let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let name = f
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
             if name.is_empty() {
                 continue;
             }
@@ -368,7 +386,10 @@ impl AlistV3 {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
-        let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(status as i64);
+        let code = v
+            .get("code")
+            .and_then(|c| c.as_i64())
+            .unwrap_or(status as i64);
         if code != 200 {
             return Err(format!(
                 "AList 上传失败: {}",

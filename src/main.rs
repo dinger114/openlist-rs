@@ -6,18 +6,22 @@ mod config;
 mod drivers;
 mod state;
 
-use clap::{Parser, Subcommand};
-use state::AppState;
-use std::io::{BufRead, Write};
 use axum::{
     routing::{delete, get, patch, post},
     Router,
 };
+use clap::{Parser, Subcommand};
+use state::AppState;
+use std::io::{BufRead, Write};
 
 // ---------- CLI ----------
 
 #[derive(Parser, Debug)]
-#[command(name = "openlist-rs", version, about = "OpenList Rust 版 - 多网盘浏览下载")]
+#[command(
+    name = "openlist-rs",
+    version,
+    about = "OpenList Rust 版 - 多网盘浏览下载"
+)]
 struct Args {
     /// 监听地址：0.0.0.0 局域网开放，127.0.0.1 仅本机
     #[arg(short = 'a', long, default_value = "0.0.0.0")]
@@ -59,9 +63,18 @@ async fn main() {
 
     let app = Router::new()
         // 自有面板 API
-        .route("/api/accounts", get(api::list_accounts).post(api::add_account))
-        .route("/api/accounts/{id}", delete(api::del_account).put(api::edit_account))
-        .route("/api/accounts/{id}/enabled", patch(api::patch_account_enabled))
+        .route(
+            "/api/accounts",
+            get(api::list_accounts).post(api::add_account),
+        )
+        .route(
+            "/api/accounts/{id}",
+            delete(api::del_account).put(api::edit_account),
+        )
+        .route(
+            "/api/accounts/{id}/enabled",
+            patch(api::patch_account_enabled),
+        )
         .route("/api/accounts/{id}/secret", get(api::get_account_secret))
         .route("/api/files", get(api::list_files))
         .route("/api/download", get(api::get_download))

@@ -75,7 +75,11 @@ impl Ilanzou {
         root_folder_id: String,
         store: Arc<Store>,
     ) -> Self {
-        let conf = if site == "feijipan" { &FEIJIPAN } else { &ILANZOU };
+        let conf = if site == "feijipan" {
+            &FEIJIPAN
+        } else {
+            &ILANZOU
+        };
         Ilanzou {
             conf,
             http: Client::new(),
@@ -120,7 +124,9 @@ impl Ilanzou {
         if token.is_empty() {
             return Err(format!(
                 "蓝奏云登录失败: {}",
-                v.get("msg").and_then(|m| m.as_str()).unwrap_or("token 为空")
+                v.get("msg")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("token 为空")
             ));
         }
         self.save_token(&token);
@@ -142,9 +148,17 @@ impl Ilanzou {
             }
             *self.uuid.lock().unwrap() = uuid;
         }
-        let v = self.proved("/user/account/map", reqwest::Method::GET, None, None).await?;
-        let user_id = v.pointer("/map/userId").map(value_to_string).unwrap_or_default();
-        let account = v.pointer("/map/account").map(value_to_string).unwrap_or_default();
+        let v = self
+            .proved("/user/account/map", reqwest::Method::GET, None, None)
+            .await?;
+        let user_id = v
+            .pointer("/map/userId")
+            .map(value_to_string)
+            .unwrap_or_default();
+        let account = v
+            .pointer("/map/account")
+            .map(value_to_string)
+            .unwrap_or_default();
         if user_id.is_empty() {
             return Err("蓝奏云登录态校验失败（账号密码错误或未登录）".into());
         }
@@ -235,8 +249,15 @@ impl Ilanzou {
             {
                 self.login().await?;
                 // Box::pin 打断异步递归（重登后重试一次）
-                return Box::pin(self.request_inner(pathname, proved, method, query_extra, body, true))
-                    .await;
+                return Box::pin(self.request_inner(
+                    pathname,
+                    proved,
+                    method,
+                    query_extra,
+                    body,
+                    true,
+                ))
+                .await;
             }
             return Err(format!(
                 "蓝奏云请求失败 ({code}): {}",
@@ -593,10 +614,7 @@ impl Ilanzou {
                 })),
             )
             .await?;
-        let up_token = v
-            .get("upToken")
-            .map(value_to_string)
-            .unwrap_or_default();
+        let up_token = v.get("upToken").map(value_to_string).unwrap_or_default();
         if up_token == "-1" {
             // 秒传成功
             return Ok(());
@@ -615,8 +633,7 @@ impl Ilanzou {
         let (y, m, d) = civil_from_days(days);
         let key = format!("disk/{:04}/{:02}/{:02}/{account}/{now_ms}.rar", y, m, d);
         let token = if (buf.len() as u64) <= PART_SIZE {
-            let part =
-                reqwest::multipart::Part::bytes(buf).file_name(input.name.clone());
+            let part = reqwest::multipart::Part::bytes(buf).file_name(input.name.clone());
             let form = reqwest::multipart::Form::new()
                 .text("token", up_token.clone())
                 .text("key", key.clone())
@@ -691,13 +708,15 @@ impl Ilanzou {
             return Err("蓝奏云上传失败（未返回结果 token）".into());
         }
         // 3. 轮询上传结果（对齐 Go 版 maxUploadCommitRetries=10）
-        let query = format!(
-            "tokenList={token}&tokenTime={}",
-            http_date_time_now()
-        );
+        let query = format!("tokenList={token}&tokenTime={}", http_date_time_now());
         for _ in 0..10 {
             let v = self
-                .unproved("/7n/results", reqwest::Method::POST, Some(query.clone()), None)
+                .unproved(
+                    "/7n/results",
+                    reqwest::Method::POST,
+                    Some(query.clone()),
+                    None,
+                )
                 .await?;
             let status = v
                 .pointer("/list/0/status")

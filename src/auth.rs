@@ -145,8 +145,16 @@ pub(crate) async fn update_web_settings(
     State(st): State<AppState>,
     Json(req): Json<WebSettingsReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let user_ref = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let pass_ref = req.password.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let user_ref = req
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let pass_ref = req
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     if user_ref.is_none() && pass_ref.is_none() {
         return Err((StatusCode::BAD_REQUEST, "用户名和密码均未填写".to_string()));
     }

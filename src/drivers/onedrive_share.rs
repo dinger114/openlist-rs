@@ -7,8 +7,8 @@
 
 use super::{DownloadInfo, PutInput};
 use crate::config::Entry;
-use serde_json::Value;
 use reqwest::Client;
+use serde_json::Value;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -157,7 +157,11 @@ impl OnedriveShare {
         }
         if cookie.is_empty() {
             // 从 set-cookie 头再试
-            if let Some(sc) = resp.headers().get("set-cookie").and_then(|v| v.to_str().ok()) {
+            if let Some(sc) = resp
+                .headers()
+                .get("set-cookie")
+                .and_then(|v| v.to_str().ok())
+            {
                 cookie = sc.split(';').next().unwrap_or("").to_string();
             }
         }
@@ -269,7 +273,10 @@ impl OnedriveShare {
                 let size = f
                     .get("Length")
                     .or_else(|| f.get("length"))
-                    .and_then(|s| s.as_u64().or_else(|| s.as_str().and_then(|x| x.parse().ok())))
+                    .and_then(|s| {
+                        s.as_u64()
+                            .or_else(|| s.as_str().and_then(|x| x.parse().ok()))
+                    })
                     .unwrap_or(0);
                 let unique = f
                     .get("UniqueId")
@@ -321,7 +328,10 @@ impl OnedriveShare {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if !(200..300).contains(&status) {
-            return Err(format!("SharePoint REST ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "SharePoint REST ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         serde_json::from_str(&text).map_err(|e| format!("解析: {e}"))
     }
@@ -426,9 +436,9 @@ fn urlencoding_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let h = std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| {
-                u8::from_str_radix(h, 16).ok()
-            });
+            let h = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
             if let Some(b) = h {
                 out.push(b);
                 i += 3;

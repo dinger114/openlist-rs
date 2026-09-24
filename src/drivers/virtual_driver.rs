@@ -14,7 +14,10 @@ pub struct Virtual {
 
 impl Virtual {
     pub fn new(num_file: u32, num_folder: u32) -> Self {
-        Virtual { num_file, num_folder }
+        Virtual {
+            num_file,
+            num_folder,
+        }
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -74,7 +77,12 @@ impl Virtual {
         Ok(())
     }
 
-    pub async fn rename(&self, _parent_fid: &str, _e: &Entry, _new_name: &str) -> Result<(), String> {
+    pub async fn rename(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _new_name: &str,
+    ) -> Result<(), String> {
         Ok(())
     }
 

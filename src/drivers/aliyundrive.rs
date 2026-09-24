@@ -75,7 +75,10 @@ impl Aliyundrive {
             .map_err(|e| format!("刷新响应解析失败: {e}"))?;
         if let Some(code) = v.get("code").and_then(|c| c.as_str()) {
             if !code.is_empty() {
-                let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+                let msg = v
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown");
                 return Err(format!("刷新 token 失败({code}): {msg}"));
             }
         }
@@ -114,14 +117,20 @@ impl Aliyundrive {
             req = req.json(b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_str()).unwrap_or("");
         if !code.is_empty() {
             if !retried && (code == "AccessTokenInvalid" || code == "AccessTokenExpired") {
                 self.refresh().await?;
                 return Box::pin(self.request(method, path, body, true)).await;
             }
-            let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+            let msg = v
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
             return Err(format!(
                 "阿里云盘(旧)接口错误({code}): {msg}；若持续失败请改用 aliyundrive_open"
             ));
@@ -142,13 +151,8 @@ impl Aliyundrive {
         {
             Ok(v) => v,
             Err(_) => {
-                self.request(
-                    Method::POST,
-                    "/adrive/v1.0/user/getDriveInfo",
-                    None,
-                    false,
-                )
-                .await?
+                self.request(Method::POST, "/adrive/v1.0/user/getDriveInfo", None, false)
+                    .await?
             }
         };
         let drive_id = res
@@ -200,7 +204,11 @@ impl Aliyundrive {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    name: f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    name: f
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     size: f.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
                     is_dir: f.get("type").and_then(|v| v.as_str()) == Some("folder"),
                     updated_at,
@@ -263,8 +271,13 @@ impl Aliyundrive {
             "type": "folder",
             "check_name_mode": "refuse",
         });
-        self.request(Method::POST, "/adrive/v2/file/createWithFolders", Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/adrive/v2/file/createWithFolders",
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 

@@ -12,8 +12,8 @@
 use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use md5::{Digest, Md5};
-use reqwest::{Client, ClientBuilder, Method, redirect};
-use serde_json::{Value, json};
+use reqwest::{redirect, Client, ClientBuilder, Method};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -168,26 +168,26 @@ impl BaiduNetdisk {
             .query(&[("access_token", self.access_token())])
             .query(params);
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(-1);
         if errno != 0 {
             if (errno == 111 || errno == -6) && !retried {
                 self.refresh_token().await?;
                 return Box::pin(self.request(Method::GET, url, params, true)).await;
             }
-            return Err(format!("百度网盘接口错误(errno={errno})，详见 https://pan.baidu.com/union/doc/"));
+            return Err(format!(
+                "百度网盘接口错误(errno={errno})，详见 https://pan.baidu.com/union/doc/"
+            ));
         }
         Ok(v)
     }
 
     async fn get(&self, pathname: &str, params: &[(String, String)]) -> Result<Value, String> {
-        self.request(
-            Method::GET,
-            &format!("{API}{pathname}"),
-            params,
-            false,
-        )
-        .await
+        self.request(Method::GET, &format!("{API}{pathname}"), params, false)
+            .await
     }
 
     /// 对齐 Go 版 Init()：GET /xpan/nas?method=uinfo 验证 token
@@ -195,11 +195,8 @@ impl BaiduNetdisk {
         if self.access_token().is_empty() {
             self.refresh_token().await?;
         }
-        self.get(
-            "/xpan/nas",
-            &[("method".into(), "uinfo".into())],
-        )
-        .await?;
+        self.get("/xpan/nas", &[("method".into(), "uinfo".into())])
+            .await?;
         Ok(())
     }
 
@@ -232,7 +229,11 @@ impl BaiduNetdisk {
                 break;
             }
             for f in &list {
-                let path = f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let path = f
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let fs_id = f.get("fs_id").and_then(|v| v.as_i64()).unwrap_or(0);
                 files.push(Entry {
                     // fid = 完整路径（下载/列目录都以路径为键）
@@ -244,7 +245,10 @@ impl BaiduNetdisk {
                         .to_string(),
                     size: f.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
                     is_dir: f.get("isdir").and_then(|v| v.as_i64()).unwrap_or(0) == 1,
-                    updated_at: f.get("server_mtime").and_then(|v| v.as_i64()).map(|s| s * 1000),
+                    updated_at: f
+                        .get("server_mtime")
+                        .and_then(|v| v.as_i64())
+                        .map(|s| s * 1000),
                     etag: None,
                     s3_key_flag: None,
                     file_type: None,
@@ -415,11 +419,8 @@ impl BaiduNetdisk {
 
     /// 对齐 Go 版 Rename()：manage("rename", [{path, newname}])
     pub async fn rename(&self, _parent_fid: &str, e: &Entry, new_name: &str) -> Result<(), String> {
-        self.manage(
-            "rename",
-            json!([{ "path": e.fid, "newname": new_name }]),
-        )
-        .await
+        self.manage("rename", json!([{ "path": e.fid, "newname": new_name }]))
+            .await
     }
 
     /// 对齐 Go 版 Move()：manage("move", [{path, dest, newname}])
@@ -744,10 +745,7 @@ impl BaiduNetdisk {
         let err_code = v.get("error_code").and_then(|x| x.as_i64()).unwrap_or(0);
         let errno = v.get("errno").and_then(|x| x.as_i64()).unwrap_or(0);
         if err_code != 0 || errno != 0 {
-            return Err(format!(
-                "上传百度网盘分片失败，响应={}",
-                trunc(&text, 200)
-            ));
+            return Err(format!("上传百度网盘分片失败，响应={}", trunc(&text, 200)));
         }
         Ok(())
     }

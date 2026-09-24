@@ -13,11 +13,11 @@
 //!   POST /upload/drive/v3/files?uploadType=resumable 取 Location，
 //!   <5MB 单请求 PUT，否则按 5MB 分片带 Content-Range PUT
 
-use super::DownloadInfo;
 use super::aliyundrive_open::iso_to_ms;
+use super::DownloadInfo;
 use crate::config::{Credential, Entry, Store};
 use reqwest::{Client, Method};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -188,8 +188,13 @@ impl GoogleDrive {
             self.refresh_token().await?;
         }
         let url = format!("{API}/drive/v3/about");
-        self.request(Method::GET, &url, &[("fields".into(), "storageQuota".into())], false)
-            .await?;
+        self.request(
+            Method::GET,
+            &url,
+            &[("fields".into(), "storageQuota".into())],
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -220,7 +225,12 @@ impl GoogleDrive {
                 params.push(("pageToken".into(), page_token.clone()));
             }
             let resp = self
-                .request(Method::GET, &format!("{API}/drive/v3/files"), &params, false)
+                .request(
+                    Method::GET,
+                    &format!("{API}/drive/v3/files"),
+                    &params,
+                    false,
+                )
                 .await?;
             let mut items = resp
                 .get("files")
@@ -276,8 +286,13 @@ impl GoogleDrive {
     /// 对齐 Go 版 getTargetFileInfo：快捷方式目标文件信息
     async fn get_target_file_info(&self, target_id: &str) -> Result<Value, String> {
         let url = format!("{API}/drive/v3/files/{target_id}");
-        self.request(Method::GET, &url, &[("fields".into(), FILE_INFO_FIELDS.into())], false)
-            .await
+        self.request(
+            Method::GET,
+            &url,
+            &[("fields".into(), FILE_INFO_FIELDS.into())],
+            false,
+        )
+        .await
     }
 
     /// 对齐 Go 版 fileToObj：快捷方式条目的 fid 直接替换为目标 id
@@ -287,7 +302,11 @@ impl GoogleDrive {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let id = f.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = f
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let target_id = f
             .pointer("/shortcutDetails/targetId")
             .and_then(|v| v.as_str())
@@ -316,7 +335,11 @@ impl GoogleDrive {
             .and_then(iso_to_ms);
         Entry {
             fid,
-            name: f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            name: f
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             size,
             is_dir,
             updated_at,
@@ -382,10 +405,7 @@ impl GoogleDrive {
         if let Some(b) = &body {
             req = req.json(b);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("请求失败: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status().as_u16();
         let text = resp
             .text()
@@ -433,8 +453,14 @@ impl GoogleDrive {
             "parents": [parent],
             "mimeType": FOLDER_MIME,
         });
-        self.request_write(Method::POST, &format!("{API}/drive/v3/files"), &[], Some(data), false)
-            .await?;
+        self.request_write(
+            Method::POST,
+            &format!("{API}/drive/v3/files"),
+            &[],
+            Some(data),
+            false,
+        )
+        .await?;
         Ok(())
     }
 
@@ -470,7 +496,12 @@ impl GoogleDrive {
     }
 
     /// 对齐 Copy（Go 版返回 errs.NotSupport）
-    pub async fn copy(&self, _parent_fid: &str, _e: &Entry, _dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _dst_dir_fid: &str,
+    ) -> Result<(), String> {
         Err("Google Drive 不支持复制操作".into())
     }
 
@@ -522,9 +553,8 @@ impl GoogleDrive {
         mime: &str,
         size: u64,
     ) -> Result<String, String> {
-        let url = format!(
-            "{API}/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true"
-        );
+        let url =
+            format!("{API}/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true");
         let data = json!({ "name": name, "parents": [dst] });
         let mut last_err = String::new();
         for attempt in 0..2 {
@@ -622,10 +652,7 @@ impl GoogleDrive {
                     if (200..300).contains(&status) || status == 308 {
                         return Ok(());
                     }
-                    last_err = format!(
-                        "Google Drive 上传返回 HTTP {status}: {}",
-                        trunc200(&text)
-                    );
+                    last_err = format!("Google Drive 上传返回 HTTP {status}: {}", trunc200(&text));
                 }
                 Err(e) => last_err = format!("Google Drive 上传失败: {e}"),
             }
@@ -640,12 +667,7 @@ impl GoogleDrive {
         let mut offset: u64 = 0;
         while offset < size {
             let chunk_size = std::cmp::min(size - offset, UPLOAD_CHUNK_SIZE);
-            let range = format!(
-                "bytes {}-{}/{}",
-                offset,
-                offset + chunk_size - 1,
-                size
-            );
+            let range = format!("bytes {}-{}/{}", offset, offset + chunk_size - 1, size);
             let mut last_err = String::new();
             let mut done = false;
             for attempt in 0..3 {

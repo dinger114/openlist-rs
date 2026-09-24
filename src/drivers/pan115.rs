@@ -23,7 +23,7 @@ use base64::Engine;
 use num_bigint::BigUint;
 use rand::Rng;
 use reqwest::{Client, Method};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -84,16 +84,15 @@ const RSA_E: u32 = 0x10001;
 const KEY_LEN: usize = 128;
 
 const XOR_KEY_SEED: [u8; 144] = [
-    0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73,
-    0xb8, 0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4,
-    0xf1, 0xaa, 0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36,
-    0x34, 0x62, 0xa6, 0x2a, 0x96, 0x68, 0x18, 0xf2, 0x4a, 0xfd, 0xbd, 0x6b, 0x97, 0x8f, 0x4d,
-    0x8f, 0x89, 0x13, 0xb7, 0x6c, 0x8e, 0x93, 0xed, 0x0e, 0x0d, 0x48, 0x3e, 0xd7, 0x2f, 0x88,
-    0xd8, 0xfe, 0xfe, 0x7e, 0x86, 0x50, 0x95, 0x4f, 0xd1, 0xeb, 0x83, 0x26, 0x34, 0xdb, 0x66,
-    0x7b, 0x9c, 0x7e, 0x9d, 0x7a, 0x81, 0x32, 0xea, 0xb6, 0x33, 0xde, 0x3a, 0xa9, 0x59, 0x34,
-    0x66, 0x3b, 0xaa, 0xba, 0x81, 0x60, 0x48, 0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77,
-    0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e, 0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c,
-    0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5,
+    0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73, 0xb8,
+    0xde, 0x8f, 0xe7, 0xc4, 0x45, 0xda, 0x86, 0xc4, 0x9b, 0x64, 0x8b, 0x14, 0x6a, 0xb4, 0xf1, 0xaa,
+    0x38, 0x01, 0x35, 0x9e, 0x26, 0x69, 0x2c, 0x86, 0x00, 0x6b, 0x4f, 0xa5, 0x36, 0x34, 0x62, 0xa6,
+    0x2a, 0x96, 0x68, 0x18, 0xf2, 0x4a, 0xfd, 0xbd, 0x6b, 0x97, 0x8f, 0x4d, 0x8f, 0x89, 0x13, 0xb7,
+    0x6c, 0x8e, 0x93, 0xed, 0x0e, 0x0d, 0x48, 0x3e, 0xd7, 0x2f, 0x88, 0xd8, 0xfe, 0xfe, 0x7e, 0x86,
+    0x50, 0x95, 0x4f, 0xd1, 0xeb, 0x83, 0x26, 0x34, 0xdb, 0x66, 0x7b, 0x9c, 0x7e, 0x9d, 0x7a, 0x81,
+    0x32, 0xea, 0xb6, 0x33, 0xde, 0x3a, 0xa9, 0x59, 0x34, 0x66, 0x3b, 0xaa, 0xba, 0x81, 0x60, 0x48,
+    0xb9, 0xd5, 0x81, 0x9c, 0xf8, 0x6c, 0x84, 0x77, 0xff, 0x54, 0x78, 0x26, 0x5f, 0xbe, 0xe8, 0x1e,
+    0x36, 0x9f, 0x34, 0x80, 0x5c, 0x45, 0x2c, 0x9b, 0x76, 0xd5, 0x1b, 0x8f, 0xcc, 0xc3, 0xb8, 0xf5,
 ];
 
 const XOR_CLIENT_KEY: [u8; 12] = [
@@ -324,12 +323,12 @@ impl Pan115 {
             Err(_) => None,
         }
         .and_then(|v| {
-                v.pointer("/data/win/version_code")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-            })
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| FALLBACK_APP_VER.to_string());
+            v.pointer("/data/win/version_code")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| FALLBACK_APP_VER.to_string());
         *self.ua.lock().unwrap() = format!("Mozilla/5.0 115Browser/{ver}");
     }
 
@@ -354,7 +353,10 @@ impl Pan115 {
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status();
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         if status.as_u16() >= 400 {
             return Err(format!("115 接口 HTTP {status}"));
         }
@@ -673,7 +675,7 @@ fn gmt_http_date() -> String {
     let rem = secs.rem_euclid(86400);
     let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
     let wday = (days.rem_euclid(7) + 4) % 7; // 1970-01-01 是周四
-    //civil date
+                                             //civil date
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -917,7 +919,8 @@ impl Aes128 {
         for c in 0..4 {
             let o = 4 * c;
             let col = [state[o], state[o + 1], state[o + 2], state[o + 3]];
-            state[o] = gf_mul(col[0], 14) ^ gf_mul(col[1], 11) ^ gf_mul(col[2], 13) ^ gf_mul(col[3], 9);
+            state[o] =
+                gf_mul(col[0], 14) ^ gf_mul(col[1], 11) ^ gf_mul(col[2], 13) ^ gf_mul(col[3], 9);
             state[o + 1] =
                 gf_mul(col[0], 9) ^ gf_mul(col[1], 14) ^ gf_mul(col[2], 11) ^ gf_mul(col[3], 13);
             state[o + 2] =
@@ -973,7 +976,11 @@ fn crc32_ieee(data: &[u8]) -> u32 {
         for i in 0..256u32 {
             let mut c = i;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             t[i as usize] = c;
         }
@@ -1051,28 +1058,34 @@ fn lz4_decompress(input: &[u8]) -> Result<Vec<u8>, String> {
 // ---------- P-224 ECDH（ec115 NewEcdhCipher 用；num-bigint 实现仿射点运算） ----------
 
 fn p224_p() -> BigUint {
-    BigUint::from_bytes_be(&hex::decode("ffffffffffffffffffffffffffffffff000000000000000000000001").unwrap())
+    BigUint::from_bytes_be(
+        &hex::decode("ffffffffffffffffffffffffffffffff000000000000000000000001").unwrap(),
+    )
 }
 
 fn p224_n() -> BigUint {
-    BigUint::from_bytes_be(&hex::decode("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d").unwrap())
+    BigUint::from_bytes_be(
+        &hex::decode("ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d").unwrap(),
+    )
 }
 
 /// secp224r1 基点
 fn p224_g() -> (BigUint, BigUint) {
-    let gx =
-        BigUint::from_bytes_be(&hex::decode("b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21").unwrap());
-    let gy =
-        BigUint::from_bytes_be(&hex::decode("bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34").unwrap());
+    let gx = BigUint::from_bytes_be(
+        &hex::decode("b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21").unwrap(),
+    );
+    let gy = BigUint::from_bytes_be(
+        &hex::decode("bd376388b5f723fb4c22dfe6cd4375a05a07476444d5819985007e34").unwrap(),
+    );
     (gx, gy)
 }
 
 /// 远端 115 固定公钥（对齐 remotePubKey：X ++ Y，各 28 字节）
 const EC115_REMOTE_PUB: [u8; 56] = [
-    0x57, 0xA2, 0x92, 0x57, 0xCD, 0x23, 0x20, 0xE5, 0xD6, 0xD1, 0x43, 0x32, 0x2F, 0xA4, 0xBB,
-    0x8A, 0x3C, 0xF9, 0xD3, 0xCC, 0x62, 0x3E, 0xF5, 0xED, 0xAC, 0x62, 0xB7, 0x67, 0x8A, 0x89,
-    0xC9, 0x1A, 0x83, 0xBA, 0x80, 0x0D, 0x61, 0x29, 0xF5, 0x22, 0xD0, 0x34, 0xC8, 0x95, 0xDD,
-    0x24, 0x65, 0x24, 0x3A, 0xDD, 0xC2, 0x50, 0x95, 0x3B, 0xEE, 0xBA,
+    0x57, 0xA2, 0x92, 0x57, 0xCD, 0x23, 0x20, 0xE5, 0xD6, 0xD1, 0x43, 0x32, 0x2F, 0xA4, 0xBB, 0x8A,
+    0x3C, 0xF9, 0xD3, 0xCC, 0x62, 0x3E, 0xF5, 0xED, 0xAC, 0x62, 0xB7, 0x67, 0x8A, 0x89, 0xC9, 0x1A,
+    0x83, 0xBA, 0x80, 0x0D, 0x61, 0x29, 0xF5, 0x22, 0xD0, 0x34, 0xC8, 0x95, 0xDD, 0x24, 0x65, 0x24,
+    0x3A, 0xDD, 0xC2, 0x50, 0x95, 0x3B, 0xEE, 0xBA,
 ];
 
 type EcPoint = Option<(BigUint, BigUint)>;
@@ -1168,8 +1181,7 @@ impl EcdhCipher {
         // 私钥 d ∈ [1, n-1]
         let mut bytes = [0u8; 28];
         rng.fill(&mut bytes);
-        let d = BigUint::from_bytes_be(&bytes) % (&n - BigUint::from(1u32))
-            + BigUint::from(1u32);
+        let d = BigUint::from_bytes_be(&bytes) % (&n - BigUint::from(1u32)) + BigUint::from(1u32);
         let remote = (
             BigUint::from_bytes_be(&EC115_REMOTE_PUB[..28]),
             BigUint::from_bytes_be(&EC115_REMOTE_PUB[28..]),
@@ -1179,7 +1191,7 @@ impl EcdhCipher {
         let secret = big_to_28(&sx);
         let mut buf = Vec::with_capacity(30);
         buf.push(29); // p224BaseLen + 1
-        // 压缩标志位：Y 奇偶（对齐 Go：奇 -> 0x03，偶 -> 0x02）
+                      // 压缩标志位：Y 奇偶（对齐 Go：奇 -> 0x03，偶 -> 0x02）
         let y_bytes = big_to_28(&qy);
         buf.push(if y_bytes[27] & 1 == 1 { 0x03 } else { 0x02 });
         buf.extend_from_slice(&y_bytes);
@@ -1330,8 +1342,10 @@ fn generate_token(
 ) -> String {
     let uid_md5 = md5_hex(user_id.as_bytes());
     md5_hex(
-        format!("{MD5_SALT}{file_id}{file_size}{sign_key}{sign_val}{user_id}{ts}{uid_md5}{app_ver}")
-            .as_bytes(),
+        format!(
+            "{MD5_SALT}{file_id}{file_size}{sign_key}{sign_val}{user_id}{ts}{uid_md5}{app_ver}"
+        )
+        .as_bytes(),
     )
 }
 
@@ -1369,8 +1383,8 @@ fn check_oss_callback_response(status: u16, body: &[u8]) -> Result<(), String> {
     if body.is_empty() {
         return Ok(());
     }
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|e| format!("115 OSS callback 响应解析失败: {e}"))?;
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| format!("115 OSS callback 响应解析失败: {e}"))?;
     if v.get("state") == Some(&Value::Bool(false)) {
         let errno = coerce_str(v.get("errno"));
         let msg = v
@@ -1417,7 +1431,11 @@ fn split_by_part_num(file_size: u64, chunk_num: usize) -> Result<Vec<(u64, u64)>
     let base = file_size / n;
     let mut chunks = Vec::with_capacity(chunk_num);
     for i in 0..n {
-        let size = if i == n - 1 { file_size - base * (n - 1) } else { base };
+        let size = if i == n - 1 {
+            file_size - base * (n - 1)
+        } else {
+            base
+        };
         chunks.push((i * base, size));
     }
     Ok(chunks)
@@ -1457,7 +1475,9 @@ impl Pan115 {
         if let Some(m) = self.upload_meta.lock().unwrap().clone() {
             return Ok(m);
         }
-        let v = self.request(Method::POST, API_UPLOAD_INFO, None, None).await?;
+        let v = self
+            .request(Method::POST, API_UPLOAD_INFO, None, None)
+            .await?;
         let user_id = v.get("user_id").and_then(|x| x.as_i64()).unwrap_or(0);
         let userkey = v
             .get("userkey")
@@ -1475,7 +1495,11 @@ impl Pan115 {
         if !allowed {
             return Err("115 上传不可用（upload_allowed=false，可能触发风控）".into());
         }
-        let meta = UploadMeta { user_id, userkey, size_limit };
+        let meta = UploadMeta {
+            user_id,
+            userkey,
+            size_limit,
+        };
         *self.upload_meta.lock().unwrap() = Some(meta.clone());
         Ok(meta)
     }
@@ -1514,7 +1538,10 @@ impl Pan115 {
     /// - query_sorted：已按 key 排序、参与签名的子资源 query（如 "sequential&uploads&x-oss-enable-sha1"）
     /// - extra_oss_headers：额外 x-oss-* 头（x-oss-callback / x-oss-callback-var）
     /// - 返回 (HTTP 状态码, ETag, 响应体)
-    async fn oss_request(&self, args: OssRequestArgs<'_>) -> Result<(u16, Option<String>, Vec<u8>), String> {
+    async fn oss_request(
+        &self,
+        args: OssRequestArgs<'_>,
+    ) -> Result<(u16, Option<String>, Vec<u8>), String> {
         let OssRequestArgs {
             method,
             token,
@@ -1557,7 +1584,11 @@ impl Pan115 {
         let url = if query_sorted.is_empty() {
             format!("https://{host}/{}", escape_url_path(object))
         } else {
-            format!("https://{host}/{}?{}", escape_url_path(object), query_sorted)
+            format!(
+                "https://{host}/{}?{}",
+                escape_url_path(object),
+                query_sorted
+            )
         };
         let mut req = self
             .http
@@ -1685,10 +1716,7 @@ impl Pan115 {
                     .and_then(|x| x.as_str())
                     .unwrap_or("")
                     .to_string();
-                let sign_check = v
-                    .get("sign_check")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("");
+                let sign_check = v.get("sign_check").and_then(|x| x.as_str()).unwrap_or("");
                 let Some((s, e)) = sign_check.split_once('-') else {
                     return Err(format!("115 上传预检 sign_check 格式非法: {sign_check}"));
                 };
@@ -1718,8 +1746,7 @@ impl Pan115 {
         let data = tokio::fs::read(tmp)
             .await
             .map_err(|e| format!("115 读取临时文件失败: {e}"))?;
-        let callback =
-            base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
+        let callback = base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
         let callback_var =
             base64::engine::general_purpose::STANDARD.encode(params.callback_var.as_bytes());
         let (status, _, body) = self
@@ -1748,8 +1775,7 @@ impl Pan115 {
         size: u64,
     ) -> Result<(), String> {
         let token = self.get_oss_token().await?;
-        let callback =
-            base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
+        let callback = base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
         let callback_var =
             base64::engine::general_purpose::STANDARD.encode(params.callback_var.as_bytes());
         let cb_headers = [
@@ -1859,8 +1885,7 @@ impl Pan115 {
             "partNumber={part_number}&uploadId={}",
             go_query_escape(upload_id)
         );
-        let callback =
-            base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
+        let callback = base64::engine::general_purpose::STANDARD.encode(params.callback.as_bytes());
         let callback_var =
             base64::engine::general_purpose::STANDARD.encode(params.callback_var.as_bytes());
         let (status, etag, body) = self
@@ -1892,10 +1917,7 @@ impl Pan115 {
         if parent_fid.is_empty() {
             return Err("115 新建文件夹失败：父目录 ID 为空".into());
         }
-        let form = [
-            ("pid", parent_fid.to_string()),
-            ("cname", name.to_string()),
-        ];
+        let form = [("pid", parent_fid.to_string()), ("cname", name.to_string())];
         self.request(Method::POST, API_DIR_ADD, None, Some(&form))
             .await?;
         Ok(())
@@ -1923,27 +1945,16 @@ impl Pan115 {
         dst_dir_fid: &str,
     ) -> Result<(), String> {
         let _ = parent_fid;
-        let form = [
-            ("pid", dst_dir_fid.to_string()),
-            ("fid[0]", e.fid.clone()),
-        ];
+        let form = [("pid", dst_dir_fid.to_string()), ("fid[0]", e.fid.clone())];
         self.request(Method::POST, API_FILE_MOVE, None, Some(&form))
             .await?;
         Ok(())
     }
 
     /// 对齐 Go 版 Copy（115driver Copy：pid + fid[0]）
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
-        let form = [
-            ("pid", dst_dir_fid.to_string()),
-            ("fid[0]", e.fid.clone()),
-        ];
+        let form = [("pid", dst_dir_fid.to_string()), ("fid[0]", e.fid.clone())];
         self.request(Method::POST, API_FILE_COPY, None, Some(&form))
             .await?;
         Ok(())
@@ -1969,7 +1980,11 @@ impl Pan115 {
         let tmp = temp_file_path();
         let _guard = TempFileGuard(tmp.clone());
         let (actual_size, full_sha1, pre_sha1) = spool_and_sha1(input.reader, &tmp).await?;
-        let size = if input.size != 0 { input.size } else { actual_size };
+        let size = if input.size != 0 {
+            input.size
+        } else {
+            actual_size
+        };
         if meta.size_limit > 0 && size > meta.size_limit as u64 {
             return Err(format!(
                 "115 文件过大：{size} 字节超过上限 {} 字节",

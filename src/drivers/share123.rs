@@ -8,8 +8,8 @@
 
 use super::DownloadInfo;
 use crate::config::Entry;
-use reqwest::{Client, ClientBuilder, Method, redirect};
-use serde_json::{Value, json};
+use reqwest::{redirect, Client, ClientBuilder, Method};
+use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -70,7 +70,13 @@ impl Pan123Share {
     }
 
     /// 对齐 request()：自动加 timeSign 签名，code != 0 报错
-    async fn request(&self, path: &str, method: Method, query: &[(&str, String)], body: Option<Value>) -> Result<Value, String> {
+    async fn request(
+        &self,
+        path: &str,
+        method: Method,
+        query: &[(&str, String)],
+        body: Option<Value>,
+    ) -> Result<Value, String> {
         let url = format!("{B_API}{}", get_api_signed(path));
         let mut req = self
             .http
@@ -106,7 +112,11 @@ impl Pan123Share {
 
     /// 对齐 getFiles()：分页拉取
     pub async fn list(&self, parent_fid: &str) -> Result<Vec<Entry>, String> {
-        let parent = if parent_fid.is_empty() { "0" } else { parent_fid };
+        let parent = if parent_fid.is_empty() {
+            "0"
+        } else {
+            parent_fid
+        };
         let mut page = 1i64;
         let mut out = Vec::new();
         loop {
@@ -166,7 +176,9 @@ impl Pan123Share {
             "s3keyFlag": e.s3_key_flag.clone().unwrap_or_default(),
             "size": e.size,
         });
-        let resp = self.request(DOWNLOAD_INFO, Method::POST, &[], Some(body)).await?;
+        let resp = self
+            .request(DOWNLOAD_INFO, Method::POST, &[], Some(body))
+            .await?;
         let download_url = resp
             .pointer("/data/DownloadURL")
             .and_then(|x| x.as_str())
@@ -179,7 +191,11 @@ impl Pan123Share {
         // URL 带 params 参数时为 base64 编码的真链（对齐 Go 逻辑）
         let mut u_ = download_url.clone();
         if let Ok(ou) = url::Url::parse(&download_url) {
-            if let Some(params) = ou.query_pairs().find(|(k, _)| k == "params").map(|(_, v)| v.to_string()) {
+            if let Some(params) = ou
+                .query_pairs()
+                .find(|(k, _)| k == "params")
+                .map(|(_, v)| v.to_string())
+            {
                 use base64::Engine;
                 if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&params) {
                     if let Ok(s) = String::from_utf8(decoded) {
@@ -209,7 +225,10 @@ impl Pan123Share {
                 .unwrap_or("")
                 .to_string();
         } else if status < 300 {
-            let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("读取响应失败: {e}"))?;
             if let Ok(v) = serde_json::from_str::<Value>(&body) {
                 location = v
                     .pointer("/data/redirect_url")
@@ -245,7 +264,12 @@ impl Pan123Share {
     }
 
     /// 对齐 Rename()：errs.NotSupport
-    pub async fn rename(&self, _parent_fid: &str, _e: &Entry, _new_name: &str) -> Result<(), String> {
+    pub async fn rename(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _new_name: &str,
+    ) -> Result<(), String> {
         Err("123 分享为只读驱动，不支持此操作".into())
     }
 
@@ -260,7 +284,12 @@ impl Pan123Share {
     }
 
     /// 对齐 Copy()：errs.NotSupport
-    pub async fn copy(&self, _parent_fid: &str, _e: &Entry, _dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _dst_dir_fid: &str,
+    ) -> Result<(), String> {
         Err("123 分享为只读驱动，不支持此操作".into())
     }
 
@@ -291,7 +320,10 @@ fn file_to_entry(f: &Value) -> Entry {
             .get("UpdateAt")
             .and_then(|x| x.as_str())
             .and_then(parse_iso8601_cst_ms),
-        etag: f.get("Etag").and_then(|x| x.as_str()).map(|s| s.to_string()),
+        etag: f
+            .get("Etag")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string()),
         s3_key_flag: f
             .get("S3KeyFlag")
             .and_then(|x| x.as_str())
@@ -328,12 +360,7 @@ fn parse_iso8601_cst_ms(s: &str) -> Option<i64> {
     }
     let h = t[0].parse::<i64>().ok()?;
     let mi = t[1].parse::<i64>().ok()?;
-    let sec = t[2]
-        .split('.')
-        .next()
-        .unwrap_or(t[2])
-        .parse::<i64>()
-        .ok()?;
+    let sec = t[2].split('.').next().unwrap_or(t[2]).parse::<i64>().ok()?;
     let days = days_from_civil(y, mo, dd);
     Some(((days * 86_400 + h * 3600 + mi * 60 + sec) - offset_secs) * 1000)
 }
@@ -341,7 +368,9 @@ fn parse_iso8601_cst_ms(s: &str) -> Option<i64> {
 fn parse_hhmm(s: &str) -> i64 {
     let t: Vec<&str> = s.split(':').collect();
     match (t.first(), t.get(1)) {
-        (Some(h), Some(m)) => h.trim().parse::<i64>().unwrap_or(0) * 3600 + m.trim().parse::<i64>().unwrap_or(0) * 60,
+        (Some(h), Some(m)) => {
+            h.trim().parse::<i64>().unwrap_or(0) * 3600 + m.trim().parse::<i64>().unwrap_or(0) * 60
+        }
         (Some(h), None) => h.trim().parse::<i64>().unwrap_or(0) * 3600,
         _ => 0,
     }
@@ -367,7 +396,11 @@ fn crc32_table() -> &'static [u32; 256] {
         for (i, item) in t.iter_mut().enumerate() {
             let mut c = i as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
             }
             *item = c;
         }
@@ -403,7 +436,11 @@ fn sign_path(path: &str, os: &str, version: &str) -> String {
     let days = now.div_euclid(86_400);
     let rem = now.rem_euclid(86_400);
     let (y, mo, dd) = civil_from_days(days);
-    let now_str = format!("{y:04}{mo:02}{dd:02}{:02}{:02}", rem / 3600, (rem % 3600) / 60);
+    let now_str = format!(
+        "{y:04}{mo:02}{dd:02}{:02}{:02}",
+        rem / 3600,
+        (rem % 3600) / 60
+    );
     let mapped: Vec<u8> = now_str
         .bytes()
         .map(|b| TABLE[(b - b'0') as usize])

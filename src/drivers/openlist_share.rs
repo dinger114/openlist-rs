@@ -70,13 +70,15 @@ impl OpenlistShare {
             .await
             .map_err(|e| format!("OpenList 分享请求失败: {e}"))?;
         let text = resp.text().await.unwrap_or_default();
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|e| format!("OpenList 分享响应解析失败: {e}"))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("OpenList 分享响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(200);
         if code != 200 {
             return Err(format!(
                 "OpenList 分享列表失败: {}",
-                v.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误")
+                v.get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("未知错误")
             ));
         }
         Ok(v)
@@ -92,7 +94,11 @@ impl OpenlistShare {
             .unwrap_or_default();
         let mut out = Vec::new();
         for f in content {
-            let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let name = f
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
             if name.is_empty() {
                 continue;
             }
@@ -143,7 +149,12 @@ impl OpenlistShare {
         Err("OpenList 分享为只读存储".into())
     }
 
-    pub async fn rename(&self, _parent_fid: &str, _e: &Entry, _new_name: &str) -> Result<(), String> {
+    pub async fn rename(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _new_name: &str,
+    ) -> Result<(), String> {
         Err("OpenList 分享为只读存储".into())
     }
 

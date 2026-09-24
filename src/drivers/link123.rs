@@ -98,8 +98,7 @@ impl Pan123Link {
             parent_fid
         };
         let root = self.root.lock().unwrap();
-        let node = get_node_from_root(&root, path)
-            .ok_or_else(|| format!("路径不存在: {path}"))?;
+        let node = get_node_from_root(&root, path).ok_or_else(|| format!("路径不存在: {path}"))?;
         if node.is_file() {
             return Err("不是目录".into());
         }
@@ -288,9 +287,7 @@ fn parse_file_line(line: &str) -> Result<Node, String> {
         .ok()
         .and_then(|u| {
             let segs: Vec<_> = u.path_segments()?.collect();
-            segs.last().map(|s| {
-                percent_decode(s)
-            })
+            segs.last().map(|s| percent_decode(s))
         })
         .unwrap_or_else(|| url.clone());
     if name.is_empty() {

@@ -157,7 +157,10 @@ impl QuarkOrUC {
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         self.absorb_set_cookies(&resp);
         let status = resp.status();
-        let json: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let json: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = json.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
         if status.as_u16() >= 400 || code != 0 {
             let msg = json
@@ -190,8 +193,10 @@ impl QuarkOrUC {
                 ("fetch_all_file".into(), "1".into()),
                 ("fetch_risk_file_name".into(), "1".into()),
             ];
-            let refs: Vec<(&str, &str)> =
-                query.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            let refs: Vec<(&str, &str)> = query
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
             let resp = self
                 .request(reqwest::Method::GET, "/file/sort", Some(&refs), None)
                 .await?;
@@ -207,7 +212,11 @@ impl QuarkOrUC {
                     .unwrap_or("")
                     .to_string();
                 files.push(Entry {
-                    fid: f.get("fid").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    fid: f
+                        .get("fid")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     name: html_unescape(&name),
                     size: f.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
                     is_dir: !f.get("file").and_then(|v| v.as_bool()).unwrap_or(true),
@@ -318,12 +327,7 @@ impl QuarkOrUC {
     }
 
     /// 对齐 Go 版 Copy(): errs.NotSupport
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
         let _ = e;
         let _ = dst_dir_fid;
@@ -371,7 +375,12 @@ impl QuarkOrUC {
                 })),
             )
             .await?;
-        let get_s = |v: &Value, p: &str| v.pointer(p).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let get_s = |v: &Value, p: &str| {
+            v.pointer(p)
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
         let mut pre = QuarkUpPre {
             task_id: get_s(&pre_v, "/data/task_id"),
             upload_id: get_s(&pre_v, "/data/upload_id"),
@@ -379,14 +388,21 @@ impl QuarkOrUC {
             bucket: get_s(&pre_v, "/data/bucket"),
             upload_url: get_s(&pre_v, "/data/upload_url"),
             auth_info: get_s(&pre_v, "/data/auth_info"),
-            callback: pre_v.pointer("/data/callback").cloned().unwrap_or(Value::Null),
+            callback: pre_v
+                .pointer("/data/callback")
+                .cloned()
+                .unwrap_or(Value::Null),
             // 对齐 Go 版直接使用 metadata.part_size；缺失/为 0 时兜底 16MB 防止除零
             part_size: {
                 let ps = pre_v
                     .pointer("/metadata/part_size")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(16 * 1024 * 1024);
-                if ps == 0 { 16 * 1024 * 1024 } else { ps }
+                if ps == 0 {
+                    16 * 1024 * 1024
+                } else {
+                    ps
+                }
             },
         };
         if pre.task_id.is_empty() {
@@ -428,7 +444,14 @@ impl QuarkOrUC {
             let offset = part_index * part_size;
             let chunk = std::cmp::min(part_size, total - offset);
             let etag = self
-                .up_part(&pre, &mime, (part_index + 1) as i64, &tmp_path, offset, chunk)
+                .up_part(
+                    &pre,
+                    &mime,
+                    (part_index + 1) as i64,
+                    &tmp_path,
+                    offset,
+                    chunk,
+                )
                 .await?;
             md5s.push(etag);
         }
@@ -533,7 +556,8 @@ impl QuarkOrUC {
     /// 对齐 Go 版 upCommit()：XML CompleteMultipartUpload POST 回 OSS（带 callback）
     async fn up_commit(&self, pre: &QuarkUpPre, md5s: &[String]) -> Result<(), String> {
         let time_str = http_time_now();
-        let mut body = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CompleteMultipartUpload>\n");
+        let mut body =
+            String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<CompleteMultipartUpload>\n");
         for (i, m) in md5s.iter().enumerate() {
             body.push_str(&format!(
                 "<Part>\n<PartNumber>{}</PartNumber>\n<ETag>{}</ETag>\n</Part>\n",

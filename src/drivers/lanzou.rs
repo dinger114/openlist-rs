@@ -11,7 +11,7 @@
 use super::DownloadInfo;
 use crate::config::Entry;
 use regex::Regex;
-use reqwest::{Client, ClientBuilder, Method, redirect};
+use reqwest::{redirect, Client, ClientBuilder, Method};
 use serde_json::Value;
 use std::sync::Mutex;
 
@@ -47,8 +47,10 @@ fn calc_acw_sc_v2(html: &str) -> Result<String, String> {
 }
 
 fn unbox(hex_str: &str) -> String {
-    let b = [6usize, 28, 34, 31, 33, 18, 30, 23, 9, 8, 19, 38, 17, 24, 0, 5, 32, 21, 10, 22,
-    25, 14, 15, 3, 16, 27, 13, 35, 2, 29, 11, 26, 4, 36, 1, 39, 37, 7, 20, 12];
+    let b = [
+        6usize, 28, 34, 31, 33, 18, 30, 23, 9, 8, 19, 38, 17, 24, 0, 5, 32, 21, 10, 22, 25, 14, 15,
+        3, 16, 27, 13, 35, 2, 29, 11, 26, 4, 36, 1, 39, 37, 7, 20, 12,
+    ];
     let bytes = hex_str.as_bytes();
     let mut out = vec![b'0'; hex_str.len()];
     for (i, &j) in b.iter().enumerate() {
@@ -156,9 +158,7 @@ fn utf8_len(b: u8) -> usize {
 /// 对齐 htmlJsonToMap：解析 html 里 data: {...} JSON（含 JS 变量回查）
 fn html_json_to_map(html: &str) -> Result<Vec<(String, String)>, String> {
     let data_re = Regex::new(r"data[:\s]+(\{[^}]+\})").unwrap();
-    let caps = data_re
-        .captures(html)
-        .ok_or("html 中未找到 data JSON")?;
+    let caps = data_re.captures(html).ok_or("html 中未找到 data JSON")?;
     let data = caps.get(1).map(|m| m.as_str()).unwrap_or("");
     Ok(json_to_map(data, html))
 }
@@ -239,7 +239,10 @@ fn size_str_to_u64(s: &str) -> u64 {
         .get(1)
         .and_then(|m| m.as_str().parse().ok())
         .unwrap_or(0.0);
-    let unit = c.get(2).map(|m| m.as_str().to_uppercase()).unwrap_or_default();
+    let unit = c
+        .get(2)
+        .map(|m| m.as_str().to_uppercase())
+        .unwrap_or_default();
     match unit.as_str() {
         "B" => v as u64,
         "K" => (v * 1024.0) as u64,
@@ -350,18 +353,18 @@ impl Lanzou {
                 })
                 .map(|kv| kv.trim().to_string())
                 .collect();
-            let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("读取响应失败: {e}"))?;
             if body.contains("acw_sc__v2") {
                 vs = calc_acw_sc_v2(&body)?;
                 continue;
             }
-            let v: Value = serde_json::from_str(&body)
-                .map_err(|e| format!("蓝奏云登录响应解析失败: {e}"))?;
+            let v: Value =
+                serde_json::from_str(&body).map_err(|e| format!("蓝奏云登录响应解析失败: {e}"))?;
             if v.get("zt").and_then(|x| x.as_i64()) != Some(1) {
-                let info = v
-                    .get("info")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("未知错误");
+                let info = v.get("info").and_then(|x| x.as_str()).unwrap_or("未知错误");
                 return Err(format!("蓝奏云登录失败: {info}"));
             }
             *self.cookie.lock().unwrap() = cookies.join("; ");
@@ -409,7 +412,10 @@ impl Lanzou {
                 req = req.form(f);
             }
             let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-            let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("读取响应失败: {e}"))?;
             if body.contains("acw_sc__v2") {
                 vs = calc_acw_sc_v2(&body)?;
                 continue;
@@ -434,7 +440,9 @@ impl Lanzou {
                 self.uid.lock().unwrap(),
                 self.vei.lock().unwrap()
             );
-            let body = self.request(Method::POST, &url, Some(form), with_down_ip).await?;
+            let body = self
+                .request(Method::POST, &url, Some(form), with_down_ip)
+                .await?;
             let v: Value =
                 serde_json::from_str(&body).map_err(|e| format!("蓝奏云响应解析失败: {e}"))?;
             let zt = v.get("zt").and_then(|x| x.as_i64()).unwrap_or(-1);
@@ -570,7 +578,11 @@ impl Lanzou {
                 break;
             }
             for f in &text {
-                let id = f.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = f
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let name = f
                     .get("name_all")
                     .and_then(|v| v.as_str())
@@ -661,7 +673,10 @@ impl Lanzou {
                 req = req.header("cookie", cookie);
             }
             let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-            let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("读取响应失败: {e}"))?;
             let page = remove_notes(&body);
             if page.contains("取消分享") {
                 return Err("蓝奏云：文件已取消分享".into());
@@ -746,7 +761,10 @@ impl Lanzou {
             let mut req = self
                 .http_no_redirect
                 .get(&download_url)
-                .header("accept-language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+                .header(
+                    "accept-language",
+                    "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+                )
                 .header("Referer", &base_url)
                 .header("User-Agent", DEFAULT_UA)
                 .header("cookie", "down_ip=1");
@@ -765,7 +783,10 @@ impl Lanzou {
                 is_302 = true;
                 break;
             }
-            let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("读取响应失败: {e}"))?;
             if body.contains("acw_sc__v2") {
                 vs = calc_acw_sc_v2(&body)?;
                 continue;
@@ -795,7 +816,10 @@ impl Lanzou {
                     .send()
                     .await
                     .map_err(|e| format!("二次验证请求失败: {e}"))?;
-                let body = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+                let body = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("读取响应失败: {e}"))?;
                 if body.contains("acw_sc__v2") {
                     vs = calc_acw_sc_v2(&body)?;
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -892,7 +916,12 @@ impl Lanzou {
     }
 
     /// 对齐 Copy()：Go 版蓝奏云驱动没有 Copy 实现
-    pub async fn copy(&self, _parent_fid: &str, _e: &Entry, _dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _dst_dir_fid: &str,
+    ) -> Result<(), String> {
         Err("蓝奏云 不支持复制操作".into())
     }
 
@@ -947,10 +976,8 @@ impl Lanzou {
         );
         let tail = format!("\r\n--{boundary}--\r\n");
 
-        let tmp_path = std::env::temp_dir().join(format!(
-            "openlist-lanzou-{}.part",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp_path =
+            std::env::temp_dir().join(format!("openlist-lanzou-{}.part", uuid::Uuid::new_v4()));
         let _tmp_guard = TempFileGuard(tmp_path.clone());
 
         let mut body_file = tokio::fs::File::create(&tmp_path)

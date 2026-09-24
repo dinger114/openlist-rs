@@ -56,7 +56,10 @@ impl Pan115Share {
             req = req.query(&[(k, v)]);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         if v.get("state") == Some(&Value::Bool(false)) {
             let msg = v
                 .get("error")

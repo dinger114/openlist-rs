@@ -129,10 +129,7 @@ impl QuarkOpen {
                 .unwrap_or("空 token");
             return Err(format!("刷新夸克 Open token 失败: {msg}"));
         }
-        self.save_tokens(
-            if refresh.is_empty() { &rt } else { &refresh },
-            &access,
-        );
+        self.save_tokens(if refresh.is_empty() { &rt } else { &refresh }, &access);
         Ok(())
     }
 
@@ -154,12 +151,18 @@ impl QuarkOpen {
             .header("x-pan-tm", &tm)
             .header("x-pan-token", &token)
             .header("x-pan-client-id", &self.app_id)
-            .query(&[("req_id", req_id.as_str()), ("access_token", access.as_str())]);
+            .query(&[
+                ("req_id", req_id.as_str()),
+                ("access_token", access.as_str()),
+            ]);
         if let Some(b) = &body {
             req = req.json(b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let status = v.get("status").and_then(|s| s.as_i64()).unwrap_or(0);
         let errno = v.get("errno").and_then(|e| e.as_i64()).unwrap_or(0);
         let err_info = v
@@ -170,8 +173,7 @@ impl QuarkOpen {
             .to_string();
         // token 过期
         if status == -1
-            && (errno == 11001
-                || (errno == 14001 && err_info.contains("access_token")))
+            && (errno == 11001 || (errno == 14001 && err_info.contains("access_token")))
             && !retried
         {
             self.refresh_token().await?;
@@ -277,9 +279,7 @@ impl QuarkOpen {
                     updated_at: f
                         .get("updated_at")
                         .and_then(|v| v.as_i64())
-                        .or_else(|| {
-                            f.get("l_updated_at").and_then(|v| v.as_i64())
-                        }),
+                        .or_else(|| f.get("l_updated_at").and_then(|v| v.as_i64())),
                     etag: None,
                     s3_key_flag: None,
                     file_type: None,
@@ -324,7 +324,10 @@ impl QuarkOpen {
             .send()
             .await
             .map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let status = v.get("status").and_then(|s| s.as_i64()).unwrap_or(0);
         let errno = v.get("errno").and_then(|e| e.as_i64()).unwrap_or(0);
         if status >= 400 || errno != 0 {

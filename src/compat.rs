@@ -38,8 +38,9 @@ const T_IMAGE: i64 = 5;
 // 对齐 internal/bootstrap/data/setting.go 默认扩展名
 const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "avi", "mov", "rmvb", "webm", "flv", "m3u8"];
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "m4a", "wav", "opus", "wma"];
-const IMAGE_EXTS: &[&str] =
-    &["jpg", "tiff", "jpeg", "png", "gif", "bmp", "svg", "ico", "swf", "webp", "avif"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "tiff", "jpeg", "png", "gif", "bmp", "svg", "ico", "swf", "webp", "avif",
+];
 const TEXT_EXTS: &str = "txt,htm,html,xml,java,properties,sql,js,md,json,conf,ini,vue,php,py,bat,gitignore,css,go,csv,c,h,sh,vtt,srt,ass,ssa";
 
 fn obj_type(name: &str, is_dir: bool) -> i64 {
@@ -80,8 +81,19 @@ fn path_encode(p: &str) -> String {
             let mut out = String::new();
             for b in seg.bytes() {
                 match b {
-                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'@'
-                    | b'!' | b'(' | b')' | b'\'' | b'*' => out.push(b as char),
+                    b'A'..=b'Z'
+                    | b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'-'
+                    | b'_'
+                    | b'.'
+                    | b'~'
+                    | b'@'
+                    | b'!'
+                    | b'('
+                    | b')'
+                    | b'\''
+                    | b'*' => out.push(b as char),
                     _ => out.push_str(&format!("%{b:02X}")),
                 }
             }
@@ -284,7 +296,11 @@ pub(crate) async fn compat_fs_list(
     sort_entries(&mut entries);
     let total = entries.len() as i64;
     // 对齐官方 pagination: page 从 1 起，per_page<=0 返回全部
-    let per_page = if req.per_page <= 0 { total.max(1) } else { req.per_page };
+    let per_page = if req.per_page <= 0 {
+        total.max(1)
+    } else {
+        req.per_page
+    };
     let page = if req.page <= 0 { 1 } else { req.page };
     let start = (((page - 1) * per_page).clamp(0, total)) as usize;
     let end = ((page * per_page).clamp(0, total)) as usize;
@@ -867,7 +883,9 @@ pub(crate) async fn compat_fs_form(
                     .await
                     .map_err(|e| format!("写临时文件失败: {e}"))?;
             }
-            f.flush().await.map_err(|e| format!("刷新临时文件失败: {e}"))?;
+            f.flush()
+                .await
+                .map_err(|e| format!("刷新临时文件失败: {e}"))?;
             Ok::<(), String>(())
         };
         match spool.await {
@@ -890,7 +908,13 @@ pub(crate) async fn compat_fs_form(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| if fallback_name.is_empty() { None } else { Some(fallback_name.clone()) })
+        .or_else(|| {
+            if fallback_name.is_empty() {
+                None
+            } else {
+                Some(fallback_name.clone())
+            }
+        })
         .unwrap_or_default();
 
     let size = match header_size {

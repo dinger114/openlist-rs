@@ -176,7 +176,12 @@ impl YandexDisk {
         join_path(&self.root_path, sub)
     }
 
-    async fn request(&self, method: reqwest::Method, url: String, query: Option<Vec<(String, String)>>) -> Result<(u16, Value), String> {
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        url: String,
+        query: Option<Vec<(String, String)>>,
+    ) -> Result<(u16, Value), String> {
         let token = self.access_token.lock().unwrap().clone();
         let mut req = self
             .http
@@ -203,7 +208,9 @@ impl YandexDisk {
         query: Option<Vec<(String, String)>>,
     ) -> Result<Value, String> {
         let url = format!("{API}{path}");
-        let (status, v) = self.request(method.clone(), url.clone(), query.clone()).await?;
+        let (status, v) = self
+            .request(method.clone(), url.clone(), query.clone())
+            .await?;
         if status == 401 {
             self.refresh_token().await?;
             let (status2, v2) = self.request(method, url, query).await?;
@@ -216,7 +223,10 @@ impl YandexDisk {
             return Ok(v2);
         }
         if status >= 400 {
-            return Err(format!("Yandex API 失败 ({status}): {}", api_err_msg(&v, status)));
+            return Err(format!(
+                "Yandex API 失败 ({status}): {}",
+                api_err_msg(&v, status)
+            ));
         }
         Ok(v)
     }
@@ -262,7 +272,11 @@ impl YandexDisk {
         let files = self.get_files(&path).await?;
         let mut out = Vec::new();
         for f in files {
-            let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            let name = f
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
             if name.is_empty() {
                 continue;
             }
@@ -320,12 +334,8 @@ impl YandexDisk {
 
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
         let path = join_path(&self.resolve(parent_fid), name.trim_matches('/'));
-        self.request_auth(
-            reqwest::Method::PUT,
-            "",
-            Some(vec![("path".into(), path)]),
-        )
-        .await?;
+        self.request_auth(reqwest::Method::PUT, "", Some(vec![("path".into(), path)]))
+            .await?;
         Ok(())
     }
 
@@ -454,7 +464,10 @@ impl YandexDisk {
         let status = resp.status().as_u16();
         if status >= 400 {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("Yandex 上传失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "Yandex 上传失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }

@@ -331,9 +331,7 @@ impl Sftp {
                     if n == 0 {
                         break;
                     }
-                    wf.write_all(&buf[..n])
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    wf.write_all(&buf[..n]).await.map_err(|e| e.to_string())?;
                 }
                 Ok(())
             })

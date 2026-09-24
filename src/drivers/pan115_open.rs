@@ -123,11 +123,13 @@ impl Pan115Open {
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
         let status = resp.status();
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         // state=false 或 code 非 0
         let bad = v.get("state") == Some(&Value::Bool(false))
-            || v.get("code").and_then(|c| c.as_i64()).unwrap_or(0) != 0
-                && v.get("code").is_some();
+            || v.get("code").and_then(|c| c.as_i64()).unwrap_or(0) != 0 && v.get("code").is_some();
         if bad || status.as_u16() == 401 {
             let msg = v
                 .get("message")
@@ -228,9 +230,16 @@ impl Pan115Open {
                 } else {
                     // fc: "0"=dir "1"=file
                     let fc = coerce_str(f.get("fc"));
-                    (file_id, fc == "0" || f.get("file_category").and_then(|v| v.as_str()) == Some("0"))
+                    (
+                        file_id,
+                        fc == "0" || f.get("file_category").and_then(|v| v.as_str()) == Some("0"),
+                    )
                 };
-                let name = coerce_str(f.get("fn").or_else(|| f.get("file_name")).or_else(|| f.get("n")));
+                let name = coerce_str(
+                    f.get("fn")
+                        .or_else(|| f.get("file_name"))
+                        .or_else(|| f.get("n")),
+                );
                 let size = f
                     .get("fs")
                     .or_else(|| f.get("file_size"))
@@ -322,10 +331,7 @@ impl Pan115Open {
     }
 
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
-        let form = [
-            ("pid", parent_fid.to_string()),
-            ("name", name.to_string()),
-        ];
+        let form = [("pid", parent_fid.to_string()), ("name", name.to_string())];
         self.request(
             Method::POST,
             "https://proapi.115.com/open/folder/add",
@@ -354,10 +360,7 @@ impl Pan115Open {
     }
 
     pub async fn move_entry(&self, _p: &str, e: &Entry, dst: &str) -> Result<(), String> {
-        let form = [
-            ("file_ids", e.fid.clone()),
-            ("to_cid", dst.to_string()),
-        ];
+        let form = [("file_ids", e.fid.clone()), ("to_cid", dst.to_string())];
         self.request(
             Method::POST,
             "https://proapi.115.com/open/ufile/move",
@@ -370,10 +373,7 @@ impl Pan115Open {
     }
 
     pub async fn copy(&self, _p: &str, e: &Entry, dst: &str) -> Result<(), String> {
-        let form = [
-            ("file_id", e.fid.clone()),
-            ("pid", dst.to_string()),
-        ];
+        let form = [("file_id", e.fid.clone()), ("pid", dst.to_string())];
         self.request(
             Method::POST,
             "https://proapi.115.com/open/ufile/copy",

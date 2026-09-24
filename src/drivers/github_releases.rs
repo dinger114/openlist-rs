@@ -52,7 +52,9 @@ impl GithubReleases {
 
     pub async fn validate(&self) -> Result<(), String> {
         if self.points.is_empty() {
-            return Err("GitHub Releases 需要至少一条 repo_structure（如 OpenListTeam/OpenList）".into());
+            return Err(
+                "GitHub Releases 需要至少一条 repo_structure（如 OpenListTeam/OpenList）".into(),
+            );
         }
         let repo = &self.points[0].repo;
         let (status, body) = self.api_get(&format!("/repos/{repo}")).await?;
@@ -60,10 +62,16 @@ impl GithubReleases {
             return Err(format!("仓库不存在或无权访问: {repo}"));
         }
         if status == 401 || status == 403 {
-            return Err(format!("GitHub 认证/限流失败 ({status}): {}", truncate(&body, 200)));
+            return Err(format!(
+                "GitHub 认证/限流失败 ({status}): {}",
+                truncate(&body, 200)
+            ));
         }
         if !(200..300).contains(&status) {
-            return Err(format!("GitHub API 失败 ({status}): {}", truncate(&body, 200)));
+            return Err(format!(
+                "GitHub API 失败 ({status}): {}",
+                truncate(&body, 200)
+            ));
         }
         Ok(())
     }
@@ -194,9 +202,10 @@ impl GithubReleases {
         {
             if !tag.contains('/') {
                 let releases = self.fetch_all_releases(&point.repo).await?;
-                if let Some(rel) = releases.into_iter().find(|r| {
-                    r.get("tag_name").and_then(|t| t.as_str()) == Some(tag)
-                }) {
+                if let Some(rel) = releases
+                    .into_iter()
+                    .find(|r| r.get("tag_name").and_then(|t| t.as_str()) == Some(tag))
+                {
                     self.push_release_assets(point, &rel, tag, out);
                 }
             }
@@ -314,7 +323,10 @@ impl GithubReleases {
             return Ok(None);
         }
         if !(200..300).contains(&status) {
-            return Err(format!("获取 latest release 失败 ({status}): {}", truncate(&body, 200)));
+            return Err(format!(
+                "获取 latest release 失败 ({status}): {}",
+                truncate(&body, 200)
+            ));
         }
         let v: Value = serde_json::from_str(&body).map_err(|e| format!("解析 release: {e}"))?;
         Ok(Some(v))
@@ -334,7 +346,10 @@ impl GithubReleases {
                 ))
                 .await?;
             if !(200..300).contains(&status) {
-                return Err(format!("获取 releases 失败 ({status}): {}", truncate(&body, 200)));
+                return Err(format!(
+                    "获取 releases 失败 ({status}): {}",
+                    truncate(&body, 200)
+                ));
             }
             let arr: Vec<Value> =
                 serde_json::from_str(&body).map_err(|e| format!("解析 releases: {e}"))?;
@@ -429,7 +444,11 @@ fn parse_repos(s: &str) -> Vec<MountPoint> {
 
 fn next_dir(point: &str, path: &str) -> Option<String> {
     let point = point.trim_end_matches('/');
-    let path = if path == "/" { "" } else { path.trim_end_matches('/') };
+    let path = if path == "/" {
+        ""
+    } else {
+        path.trim_end_matches('/')
+    };
     let rest = point.strip_prefix(path)?;
     let rest = rest.trim_start_matches('/');
     if rest.is_empty() {

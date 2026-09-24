@@ -20,12 +20,7 @@ pub struct Kodbox {
 }
 
 impl Kodbox {
-    pub fn new(
-        address: String,
-        username: String,
-        password: String,
-        root_path: String,
-    ) -> Self {
+    pub fn new(address: String, username: String, password: String, root_path: String) -> Self {
         let address = address.trim().trim_end_matches('/').to_string();
         let root_path = root_path.trim().trim_start_matches('/').to_string();
         Kodbox {
@@ -69,9 +64,13 @@ impl Kodbox {
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
-            return Err(format!("KodBox 获取 token 失败 ({status}): {}", truncate(&text, 200)));
+            return Err(format!(
+                "KodBox 获取 token 失败 ({status}): {}",
+                truncate(&text, 200)
+            ));
         }
-        let v: Value = serde_json::from_str(&text).map_err(|e| format!("KodBox 响应解析失败: {e}"))?;
+        let v: Value =
+            serde_json::from_str(&text).map_err(|e| format!("KodBox 响应解析失败: {e}"))?;
         if v.get("code").and_then(|c| c.as_bool()) == Some(false) {
             return Err(format!(
                 "KodBox 登录失败: {}",
@@ -96,14 +95,9 @@ impl Kodbox {
     }
 
     /// 统一请求：accessToken 与业务参数同走 form 表单；code="10001" 时重登重试一次
-    async fn request(
-        &self,
-        pathname: &str,
-        form: Vec<(String, String)>,
-    ) -> Result<Value, String> {
+    async fn request(&self, pathname: &str, form: Vec<(String, String)>) -> Result<Value, String> {
         let send = |token: String| {
-            let mut fields: Vec<(String, String)> =
-                vec![("accessToken".into(), token)];
+            let mut fields: Vec<(String, String)> = vec![("accessToken".into(), token)];
             fields.extend(form.clone());
             self.http
                 .post(format!("{}{pathname}", self.address))
@@ -163,17 +157,32 @@ impl Kodbox {
         Self::check(&v)?;
         let mut out = Vec::new();
         for key in ["folderList", "fileList"] {
-            if let Some(items) = v.get("data").and_then(|d| d.get(key)).and_then(|x| x.as_array()) {
+            if let Some(items) = v
+                .get("data")
+                .and_then(|d| d.get(key))
+                .and_then(|x| x.as_array())
+            {
                 for f in items {
-                    let name = f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let fpath = f.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+                    let name = f
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let fpath = f
+                        .get("path")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if name.is_empty() || fpath.is_empty() {
                         continue;
                     }
                     let is_dir = key == "folderList"
                         || f.get("type").and_then(|t| t.as_str()) == Some("folder");
                     let size = f.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                    let mtime = f.get("modifyTime").and_then(|t| t.as_i64()).map(|s| s * 1000);
+                    let mtime = f
+                        .get("modifyTime")
+                        .and_then(|t| t.as_i64())
+                        .map(|s| s * 1000);
                     out.push(Entry {
                         fid: fpath,
                         name,
@@ -249,7 +258,10 @@ impl Kodbox {
             .request(
                 "/?explorer/index/pathCuteTo",
                 vec![
-                    ("dataArr".into(), Self::data_arr(&self.resolve(&e.fid), &e.name)),
+                    (
+                        "dataArr".into(),
+                        Self::data_arr(&self.resolve(&e.fid), &e.name),
+                    ),
                     ("path".into(), self.resolve(dst_dir_fid)),
                 ],
             )
@@ -267,7 +279,10 @@ impl Kodbox {
             .request(
                 "/?explorer/index/pathCopyTo",
                 vec![
-                    ("dataArr".into(), Self::data_arr(&self.resolve(&e.fid), &e.name)),
+                    (
+                        "dataArr".into(),
+                        Self::data_arr(&self.resolve(&e.fid), &e.name),
+                    ),
                     ("path".into(), self.resolve(dst_dir_fid)),
                 ],
             )
@@ -280,7 +295,10 @@ impl Kodbox {
             .request(
                 "/?explorer/index/pathDelete",
                 vec![
-                    ("dataArr".into(), Self::data_arr(&self.resolve(&e.fid), &e.name)),
+                    (
+                        "dataArr".into(),
+                        Self::data_arr(&self.resolve(&e.fid), &e.name),
+                    ),
                     ("shiftDelete".into(), "1".into()),
                 ],
             )

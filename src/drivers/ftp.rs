@@ -198,7 +198,11 @@ impl Ftp {
 
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
         let path = encode_path(
-            &format!("{}/{}", self.resolve(parent_fid).trim_end_matches('/'), name),
+            &format!(
+                "{}/{}",
+                self.resolve(parent_fid).trim_end_matches('/'),
+                name
+            ),
             &self.encoding,
         );
         self.with_conn(move |c| {
@@ -333,10 +337,8 @@ impl Ftp {
             }
             data.extend_from_slice(&buf[..n]);
         }
-        self.with_conn(move |c| {
-            Box::pin(async move { pasv_stor(c, &remote, &data).await })
-        })
-        .await
+        self.with_conn(move |c| Box::pin(async move { pasv_stor(c, &remote, &data).await }))
+            .await
     }
 }
 

@@ -119,7 +119,14 @@ impl Pan123Open {
                     .unwrap_or("空 token");
                 return Err(format!("刷新 123 Open token 失败: {msg}"));
             }
-            self.save_tokens(if refresh.is_empty() { None } else { Some(&refresh) }, &access);
+            self.save_tokens(
+                if refresh.is_empty() {
+                    None
+                } else {
+                    Some(&refresh)
+                },
+                &access,
+            );
             *self.expired_at.lock().unwrap() =
                 Some(Instant::now() + Duration::from_secs(90 * 24 * 3600));
             return Ok(());
@@ -217,7 +224,10 @@ impl Pan123Open {
             req = req.json(&b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
         if code == 401 && !retried {
             self.get_token(true).await?;
@@ -251,13 +261,7 @@ impl Pan123Open {
                 ("lastFileId".into(), last_file_id.to_string()),
             ];
             let resp = self
-                .request(
-                    Method::GET,
-                    "/api/v2/file/list",
-                    Some(&query),
-                    None,
-                    false,
-                )
+                .request(Method::GET, "/api/v2/file/list", Some(&query), None, false)
                 .await?;
             let list = resp
                 .pointer("/data/fileList")
@@ -364,8 +368,14 @@ impl Pan123Open {
             "name": name,
             "parentID": parent,
         });
-        self.request(Method::POST, "/upload/v1/file/mkdir", None, Some(body), false)
-            .await?;
+        self.request(
+            Method::POST,
+            "/upload/v1/file/mkdir",
+            None,
+            Some(body),
+            false,
+        )
+        .await?;
         Ok(())
     }
 

@@ -19,7 +19,7 @@ use reqwest::redirect::Policy;
 use reqwest::{Client, Method};
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha1::Sha1;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -92,22 +92,35 @@ fn b64tohex(a: &str) -> String {
     let mut e: u8 = 0;
     let mut c: usize = 0;
     for m in a.chars() {
-        if m == '=' { continue; }
+        if m == '=' {
+            continue;
+        }
         let v = match B64MAP.iter().position(|&b| b == m as u8) {
             Some(pos) => pos,
             None => continue,
         };
         if e == 0 {
-            e = 1; d.push(int2char(v >> 2)); c = 3 & v;
+            e = 1;
+            d.push(int2char(v >> 2));
+            c = 3 & v;
         } else if e == 1 {
-            e = 2; d.push(int2char((c << 2) | (v >> 4))); c = 15 & v;
+            e = 2;
+            d.push(int2char((c << 2) | (v >> 4)));
+            c = 15 & v;
         } else if e == 2 {
-            e = 3; d.push(int2char(c)); d.push(int2char(v >> 2)); c = 3 & v;
+            e = 3;
+            d.push(int2char(c));
+            d.push(int2char(v >> 2));
+            c = 3 & v;
         } else {
-            e = 0; d.push(int2char((c << 2) | (v >> 4))); d.push(int2char(15 & v));
+            e = 0;
+            d.push(int2char((c << 2) | (v >> 4)));
+            d.push(int2char(15 & v));
         }
     }
-    if e == 1 { d.push(int2char(c << 2)); }
+    if e == 1 {
+        d.push(int2char(c << 2));
+    }
     d
 }
 
@@ -180,7 +193,10 @@ impl Cloud189 {
         if final_url.as_str() == LOGIN_OK_URL {
             return Ok(());
         }
-        let q: Vec<(String, String)> = final_url.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        let q: Vec<(String, String)> = final_url
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
         let get = |key: &str| -> String {
             q.iter()
                 .find(|(k, _)| k == key)
@@ -200,7 +216,10 @@ impl Cloud189 {
         // 登录接口返回非 JSON 时带上 HTTP 状态与响应片段，便于定位问题（对齐 Go 版 Debug 日志）
         let expect_json = async |res: reqwest::Response, step: &str| -> Result<Value, String> {
             let status = res.status();
-            let body = res.text().await.map_err(|e| format!("189 {step} 读取响应失败: {e}"))?;
+            let body = res
+                .text()
+                .await
+                .map_err(|e| format!("189 {step} 读取响应失败: {e}"))?;
             serde_json::from_str::<Value>(&body).map_err(|_| {
                 format!(
                     "189 {step} 响应非 JSON (HTTP {status}): {}",
@@ -220,15 +239,42 @@ impl Cloud189 {
         .map_err(|e| format!("189 appConf 请求失败: {e}"))?;
         let conf: Value = expect_json(res, "appConf").await?;
         if json_result(&conf).unwrap_or(-1) != 0 {
-            let msg = conf.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
+            let msg = conf
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
             return Err(format!("189 appConf 失败: {msg}"));
         }
-        let account_type = conf.pointer("/data/accountType").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let return_url = conf.pointer("/data/returnUrl").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let mail_suffix = conf.pointer("/data/mailSuffix").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let param_id = conf.pointer("/data/paramId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let client_type = conf.pointer("/data/clientType").and_then(|v| v.as_i64()).unwrap_or(0).to_string();
-        let is_oauth2 = conf.pointer("/data/isOauth2").and_then(|v| v.as_bool()).unwrap_or(false).to_string();
+        let account_type = conf
+            .pointer("/data/accountType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let return_url = conf
+            .pointer("/data/returnUrl")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let mail_suffix = conf
+            .pointer("/data/mailSuffix")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let param_id = conf
+            .pointer("/data/paramId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let client_type = conf
+            .pointer("/data/clientType")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .to_string();
+        let is_oauth2 = conf
+            .pointer("/data/isOauth2")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            .to_string();
 
         // Step 2: encryptConf（取 RSA 公钥与加密前缀）
         let res = login_headers(
@@ -243,8 +289,16 @@ impl Cloud189 {
         if json_result(&enc).unwrap_or(-1) != 0 {
             return Err(format!("189 获取 encryptConf 失败: {enc}"));
         }
-        let pre = enc.pointer("/data/pre").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let pub_key = enc.pointer("/data/pubKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let pre = enc
+            .pointer("/data/pre")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let pub_key = enc
+            .pointer("/data/pubKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // Step 3: RSA 加密账号密码并提交登录
         // 用不跟随重定向的 client 发送，避免登录接口 302 时丢失 JSON 响应体（对齐 Go resty 拿到 body 后解析的行为）
@@ -295,7 +349,10 @@ impl Cloud189 {
 
         let login: Value = expect_json(res, "loginSubmit").await?;
         if json_result(&login).unwrap_or(-1) != 0 {
-            let msg = login.get("msg").and_then(|m| m.as_str()).unwrap_or("unknown");
+            let msg = login
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
             return Err(format!("189 登录失败: {msg}"));
         }
         // 关键步骤：跟随登录响应里的 toUrl 完成 OAuth 回调跳转，
@@ -374,10 +431,7 @@ impl Cloud189 {
         if let Some(f) = form {
             req = req.form(f);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("189 请求失败: {e}"))?;
+        let resp = req.send().await.map_err(|e| format!("189 请求失败: {e}"))?;
         let v: Value = resp
             .json()
             .await
@@ -452,7 +506,11 @@ impl Cloud189 {
                             .and_then(|i| i.as_i64())
                             .unwrap_or(0)
                             .to_string(),
-                        name: f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                        name: f
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         size: 0,
                         is_dir: true,
                         updated_at: f
@@ -474,7 +532,11 @@ impl Cloud189 {
                             .and_then(|i| i.as_i64())
                             .unwrap_or(0)
                             .to_string(),
-                        name: f.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+                        name: f
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         size: f.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
                         is_dir: false,
                         updated_at: f
@@ -503,10 +565,7 @@ impl Cloud189 {
                 false,
             )
             .await?;
-        let first_url = v
-            .get("downloadUrl")
-            .and_then(|u| u.as_str())
-            .unwrap_or("");
+        let first_url = v.get("downloadUrl").and_then(|u| u.as_str()).unwrap_or("");
         if first_url.is_empty() {
             return Err("189 未返回下载直链".into());
         }
@@ -619,12 +678,7 @@ impl Cloud189 {
     }
 
     /// 对齐 Go Copy()：batch createBatchTask(type=COPY)
-    pub async fn copy(
-        &self,
-        parent_fid: &str,
-        e: &Entry,
-        dst_dir_fid: &str,
-    ) -> Result<(), String> {
+    pub async fn copy(&self, parent_fid: &str, e: &Entry, dst_dir_fid: &str) -> Result<(), String> {
         let _ = parent_fid;
         let dst = self.normalize_fid(dst_dir_fid);
         self.batch_task("COPY", dst.as_str(), e).await

@@ -14,8 +14,8 @@
 use super::DownloadInfo;
 use crate::config::Entry;
 use base64::Engine;
-use reqwest::{Client, ClientBuilder, redirect};
-use serde_json::{Value, json};
+use reqwest::{redirect, Client, ClientBuilder};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -99,8 +99,12 @@ impl Weiyun {
         for v in headers.get_all(reqwest::header::SET_COOKIE) {
             let Ok(s) = v.to_str() else { continue };
             // 只取第一个 k=v 对（忽略 Path/Domain/Expires 等属性）
-            let Some(pair) = s.split(';').next() else { continue };
-            let Some((k, val)) = pair.split_once('=') else { continue };
+            let Some(pair) = s.split(';').next() else {
+                continue;
+            };
+            let Some((k, val)) = pair.split_once('=') else {
+                continue;
+            };
             let (k, val) = (k.trim(), val.trim());
             if k.is_empty() || val.is_empty() {
                 continue;
@@ -231,9 +235,7 @@ impl Weiyun {
         data: Value,
     ) -> Result<Value, String> {
         let body = self.build_body(cmd_name, cmd, &data);
-        let resp = self
-            .do_request(protocol, cmd_name, cmd, &body)
-            .await?;
+        let resp = self.do_request(protocol, cmd_name, cmd, &body).await?;
         match resp {
             Ok(v) => Ok(v),
             Err(e) if e.contains("HTTP 403") => {
@@ -251,8 +253,9 @@ impl Weiyun {
                     return Err(e);
                 }
                 let r = match self.refresh_ctoken().await {
-                    Err(e2) if e2 == EXPIRED
-                        && matches!(self.login_type(), "weixin" | "weixin_openid") =>
+                    Err(e2)
+                        if e2 == EXPIRED
+                            && matches!(self.login_type(), "weixin" | "weixin_openid") =>
                     {
                         match self.weixin_refresh_token().await {
                             Ok(()) => self.refresh_ctoken().await,
@@ -277,7 +280,10 @@ impl Weiyun {
             .and_then(|x| x.as_str())
             .unwrap_or("");
         let wx_openid = if wx_openid.is_empty() {
-            token_info.get("minico_openid").cloned().unwrap_or(Value::Null)
+            token_info
+                .get("minico_openid")
+                .cloned()
+                .unwrap_or(Value::Null)
         } else {
             json!(wx_openid)
         };
@@ -327,10 +333,7 @@ impl Weiyun {
         let resp = self
             .http
             .post(&url)
-            .query(&[
-                ("g_tk", self.cookie("wyctoken")),
-                ("cmd", cmd.to_string()),
-            ])
+            .query(&[("g_tk", self.cookie("wyctoken")), ("cmd", cmd.to_string())])
             .header("user-agent", UA)
             .header("referer", format!("{BASE}/disk"))
             .header("origin", BASE)
@@ -342,7 +345,10 @@ impl Weiyun {
             .map_err(|e| format!("微云请求失败: {e}"))?;
         let status = resp.status().as_u16();
         self.store_cookies(resp.headers());
-        let text = resp.text().await.map_err(|e| format!("读取响应失败: {e}"))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取响应失败: {e}"))?;
         if status != 200 {
             if status == 403 {
                 return Ok(Err("HTTP 403（会话可能已过期）".into()));
@@ -568,8 +574,12 @@ impl Weiyun {
         }
         let cookie = format!(
             "{}={}",
-            item.get("cookie_name").and_then(|x| x.as_str()).unwrap_or(""),
-            item.get("cookie_value").and_then(|x| x.as_str()).unwrap_or("")
+            item.get("cookie_name")
+                .and_then(|x| x.as_str())
+                .unwrap_or(""),
+            item.get("cookie_value")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
         );
         Ok(DownloadInfo {
             url,
@@ -667,7 +677,8 @@ impl Weiyun {
                 }),
             )
         };
-        self.request("weiyunQdiskClient", cmd_name, cmd, data).await?;
+        self.request("weiyunQdiskClient", cmd_name, cmd, data)
+            .await?;
         Ok(())
     }
 
@@ -715,7 +726,12 @@ impl Weiyun {
     }
 
     /// 对齐 Copy（Go 版返回 errs.NotImplement）
-    pub async fn copy(&self, _parent_fid: &str, _e: &Entry, _dst_dir_fid: &str) -> Result<(), String> {
+    pub async fn copy(
+        &self,
+        _parent_fid: &str,
+        _e: &Entry,
+        _dst_dir_fid: &str,
+    ) -> Result<(), String> {
         Err("微云不支持复制操作".into())
     }
 
@@ -900,10 +916,7 @@ impl Weiyun {
         for attempt in 0..2 {
             let resp = client
                 .post(url)
-                .query(&[
-                    ("g_tk", self.cookie("wyctoken")),
-                    ("cmd", cmd.to_string()),
-                ])
+                .query(&[("g_tk", self.cookie("wyctoken")), ("cmd", cmd.to_string())])
                 .header("user-agent", UA)
                 .header("referer", format!("{BASE}/disk"))
                 .header("origin", BASE)
@@ -953,12 +966,19 @@ impl Weiyun {
                 "ReqMsg_body": { "weiyun.PreUploadMsgReq_body": param }
             },
         });
-        let bytes = serde_json::to_vec(&body).map_err(|e| format!("序列化 PreUpload 请求失败: {e}"))?;
+        let bytes =
+            serde_json::to_vec(&body).map_err(|e| format!("序列化 PreUpload 请求失败: {e}"))?;
         let client = Client::builder()
             .build()
             .map_err(|e| format!("构建微云上传客户端失败: {e}"))?;
         let v = self
-            .upload_http(&client, PRE_UPLOAD_URL, CMD_PRE_UPLOAD, bytes, "application/json")
+            .upload_http(
+                &client,
+                PRE_UPLOAD_URL,
+                CMD_PRE_UPLOAD,
+                bytes,
+                "application/json",
+            )
             .await?;
         // 响应形如 {ret, msg, result:{rsp_header:{retcode,retmsg}, rsp_body:{RspMsg_body:{...}}}}
         let ret = v.get("ret").and_then(|x| x.as_i64()).unwrap_or(0);
@@ -984,11 +1004,12 @@ impl Weiyun {
                 .to_string();
             return Err(format!("微云 PreUpload 失败(retcode={retcode}): {msg}"));
         }
-        Ok(v
-            .pointer("/result/rsp_body/RspMsg_body/weiyunPreUploadMsgRsp_body")
-            .or_else(|| v.pointer("/data/rsp_body/RspMsg_body/weiyunPreUploadMsgRsp_body"))
-            .cloned()
-            .unwrap_or(json!({})))
+        Ok(
+            v.pointer("/result/rsp_body/RspMsg_body/weiyunPreUploadMsgRsp_body")
+                .or_else(|| v.pointer("/data/rsp_body/RspMsg_body/weiyunPreUploadMsgRsp_body"))
+                .cloned()
+                .unwrap_or(json!({})),
+        )
     }
 
     /// upload.weiyun.com multipart 请求（对齐 SDK：json 字段 + 可选 upload 文件分片，
@@ -1018,7 +1039,8 @@ impl Weiyun {
         let inner_str =
             serde_json::to_string(&inner).map_err(|e| format!("序列化上传请求失败: {e}"))?;
         // 严格按 SDK 字节格式拼装 multipart
-        let mut body: Vec<u8> = Vec::with_capacity(inner_str.len() + piece.as_ref().map_or(0, |p| p.len()) + 512);
+        let mut body: Vec<u8> =
+            Vec::with_capacity(inner_str.len() + piece.as_ref().map_or(0, |p| p.len()) + 512);
         body.extend_from_slice(
             format!(
                 "--{UPLOAD_BOUNDARY}\r\nContent-Disposition: form-data; name=\"json\"\r\n\r\n{inner_str}"
@@ -1037,9 +1059,7 @@ impl Weiyun {
         body.extend_from_slice(format!("\r\n--{UPLOAD_BOUNDARY}--\r\n").as_bytes());
 
         let ct = format!("multipart/form-data; boundary={UPLOAD_BOUNDARY}");
-        let v = self
-            .upload_http(client, UPLOAD_URL, cmd, body, &ct)
-            .await?;
+        let v = self.upload_http(client, UPLOAD_URL, cmd, body, &ct).await?;
         // 响应直接绑定 rsp_header/rsp_body（对齐 SDK SetResult(&respRaw.Data)）；
         // 兼容 {data:{...}} 包装
         let retcode = v
@@ -1054,12 +1074,13 @@ impl Weiyun {
                 .and_then(|x| x.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            return Err(format!("微云上传接口错误({cmd_name} retcode={retcode}): {msg}"));
+            return Err(format!(
+                "微云上传接口错误({cmd_name} retcode={retcode}): {msg}"
+            ));
         }
         let body_key = format!("/rsp_body/RspMsg_body/weiyun.{cmd_name}MsgRsp_body");
         let body_key_data = format!("/data/rsp_body/RspMsg_body/weiyun.{cmd_name}MsgRsp_body");
-        Ok(v
-            .pointer(&body_key)
+        Ok(v.pointer(&body_key)
             .or_else(|| v.pointer(&body_key_data))
             .cloned()
             .unwrap_or(json!({})))
@@ -1118,7 +1139,13 @@ impl Weiyun {
             "channel": { "id": id, "offset": offset, "len": len },
         });
         let resp = self
-            .upload_multipart(client, "UploadPiece", CMD_UPLOAD_PIECE, data, Some(piece.to_vec()))
+            .upload_multipart(
+                client,
+                "UploadPiece",
+                CMD_UPLOAD_PIECE,
+                data,
+                Some(piece.to_vec()),
+            )
             .await?;
         let state = resp
             .get("upload_state")
@@ -1436,7 +1463,10 @@ mod tests {
 
     #[test]
     fn test_token_info_weixin() {
-        let w = Weiyun::new("wy_uf=1; openid=o1; wy_appid=ap; access_token=at".into(), String::new());
+        let w = Weiyun::new(
+            "wy_uf=1; openid=o1; wy_appid=ap; access_token=at".into(),
+            String::new(),
+        );
         assert_eq!(w.login_type(), "weixin");
         let ti = w.token_info();
         assert_eq!(ti["token_type"], 1);
@@ -1447,12 +1477,10 @@ mod tests {
     fn test_build_body() {
         let w = Weiyun::new("wy_uf=0; p_skey=abc; wyctoken=tk".into(), String::new());
         let body = w.build_body("DiskDirList", 2208, &json!({"dir_key": "x"}));
-        let header: Value =
-            serde_json::from_str(body["req_header"].as_str().unwrap()).unwrap();
+        let header: Value = serde_json::from_str(body["req_header"].as_str().unwrap()).unwrap();
         assert_eq!(header["cmd"], 2208);
         assert_eq!(header["appid"], 30013);
-        let inner: Value =
-            serde_json::from_str(body["req_body"].as_str().unwrap()).unwrap();
+        let inner: Value = serde_json::from_str(body["req_body"].as_str().unwrap()).unwrap();
         assert_eq!(
             inner["ReqMsg_body"][".weiyun.DiskDirListMsgReq_body"]["dir_key"],
             "x"

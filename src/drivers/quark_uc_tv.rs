@@ -249,7 +249,10 @@ impl QuarkUcTv {
             req = req.json(b);
         }
         let resp = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
-        let v: Value = resp.json().await.map_err(|e| format!("响应解析失败: {e}"))?;
+        let v: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应解析失败: {e}"))?;
         let status = v.get("status").and_then(|s| s.as_i64()).unwrap_or(0);
         let errno = v.get("errno").and_then(|e| e.as_i64()).unwrap_or(0);
         let err_info = v
@@ -333,9 +336,7 @@ impl QuarkUcTv {
                 let is_dir = f
                     .get("dir")
                     .and_then(|v| v.as_bool())
-                    .unwrap_or_else(|| {
-                        !f.get("file").and_then(|v| v.as_bool()).unwrap_or(true)
-                    });
+                    .unwrap_or_else(|| !f.get("file").and_then(|v| v.as_bool()).unwrap_or(true));
                 files.push(Entry {
                     fid: f
                         .get("fid")

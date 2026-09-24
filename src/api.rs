@@ -85,8 +85,10 @@ pub(crate) fn default_root_fid(driver_kind: &str, cred: &Credential) -> String {
             _ => String::new(),
         },
         "webdav" => "/".into(),
-        "s3" | "sftp" | "ftp" | "alist_v3" | "github_releases" | "onedrive_app" | "pikpak_share" => "/".into(),
-        "openlist" | "openlist_share" | "virtual" | "bunny" | "yandex_disk" | "seafile" | "kodbox" | "cloudreve_v4" | "terabox" => "/".into(),
+        "s3" | "sftp" | "ftp" | "alist_v3" | "github_releases" | "onedrive_app"
+        | "pikpak_share" => "/".into(),
+        "openlist" | "openlist_share" | "virtual" | "bunny" | "yandex_disk" | "seafile"
+        | "kodbox" | "cloudreve_v4" | "terabox" => "/".into(),
         "ilanzou" => match cred {
             Credential::Ilanzou { root_folder_id, .. } => {
                 if root_folder_id.is_empty() {
@@ -371,8 +373,13 @@ pub(crate) async fn add_account(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    let userpass = match (req.username.as_deref().map(str::trim), req.password.as_deref().map(str::trim)) {
-        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u.to_string(), p.to_string())),
+    let userpass = match (
+        req.username.as_deref().map(str::trim),
+        req.password.as_deref().map(str::trim),
+    ) {
+        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => {
+            Some((u.to_string(), p.to_string()))
+        }
         _ => None,
     };
     let refresh = req
@@ -413,12 +420,13 @@ pub(crate) async fn add_account(
         "quark_uc" | "uc" => (
             "quark_uc",
             Credential::QuarkUC {
-                cookie: cookie.ok_or((StatusCode::BAD_REQUEST, "UC 网盘需要 cookie".to_string()))?,
+                cookie: cookie
+                    .ok_or((StatusCode::BAD_REQUEST, "UC 网盘需要 cookie".to_string()))?,
             },
         ),
         "123pan" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "123 网盘需要账号密码".to_string()))?;
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "123 网盘需要账号密码".to_string()))?;
             (
                 "123pan",
                 Credential::Pan123 {
@@ -465,8 +473,8 @@ pub(crate) async fn add_account(
             },
         ),
         "thunder" | "xunlei" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "迅雷网盘需要账号密码".to_string()))?;
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "迅雷网盘需要账号密码".to_string()))?;
             (
                 "thunder",
                 Credential::Thunder {
@@ -488,7 +496,14 @@ pub(crate) async fn add_account(
                     "蓝奏云需要账号密码或 cookie".to_string(),
                 ));
             }
-            ("lanzou", Credential::Lanzou { cookie, account, password })
+            (
+                "lanzou",
+                Credential::Lanzou {
+                    cookie,
+                    account,
+                    password,
+                },
+            )
         }
         "pan139" | "139yun" | "mobile" => {
             let auth = req
@@ -496,20 +511,29 @@ pub(crate) async fn add_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "移动云盘需要 139 Authorization".to_string()))?;
-            ("pan139", Credential::Yun139 {
-                authorization: auth.to_string(),
-                drive_type: "personal_new".into(),
-            })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "移动云盘需要 139 Authorization".to_string(),
+                ))?;
+            (
+                "pan139",
+                Credential::Yun139 {
+                    authorization: auth.to_string(),
+                    drive_type: "personal_new".into(),
+                },
+            )
         }
         "cloud189" | "189" | "tianyi" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "天翼云盘需要账号密码".to_string()))?;
-            ("cloud189", Credential::Cloud189 {
-                username: u,
-                password: p,
-                cookie: String::new(),
-            })
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "天翼云盘需要账号密码".to_string()))?;
+            (
+                "cloud189",
+                Credential::Cloud189 {
+                    username: u,
+                    password: p,
+                    cookie: String::new(),
+                },
+            )
         }
         "local" => {
             let root_path = req
@@ -517,8 +541,16 @@ pub(crate) async fn add_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "本机存储需要挂载目录路径".to_string()))?;
-            ("local", Credential::Local { root_path: root_path.to_string() })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "本机存储需要挂载目录路径".to_string(),
+                ))?;
+            (
+                "local",
+                Credential::Local {
+                    root_path: root_path.to_string(),
+                },
+            )
         }
         "webdav" => {
             let url = req
@@ -527,18 +559,21 @@ pub(crate) async fn add_account(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "WebDAV 需要服务器地址".to_string()))?;
-            ("webdav", Credential::Webdav {
-                url: url.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                root_path: req
-                    .root_path
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("/")
-                    .to_string(),
-            })
+            (
+                "webdav",
+                Credential::Webdav {
+                    url: url.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    root_path: req
+                        .root_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("/")
+                        .to_string(),
+                },
+            )
         }
         "123pan_share" | "123share" => {
             let share_key = req
@@ -547,11 +582,14 @@ pub(crate) async fn add_account(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "123 分享需要 shareKey".to_string()))?;
-            ("123pan_share", Credential::Pan123Share {
-                share_key: share_key.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-            })
+            (
+                "123pan_share",
+                Credential::Pan123Share {
+                    share_key: share_key.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                },
+            )
         }
         "weiyun" => {
             let cookies = req
@@ -559,411 +597,735 @@ pub(crate) async fn add_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "腾讯微云需要登录 cookie".to_string()))?;
-            ("weiyun", Credential::Weiyun {
-                cookies: cookies.to_string(),
-                root_folder_id: String::new(),
-            })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "腾讯微云需要登录 cookie".to_string(),
+                ))?;
+            (
+                "weiyun",
+                Credential::Weiyun {
+                    cookies: cookies.to_string(),
+                    root_folder_id: String::new(),
+                },
+            )
         }
         "onedrive" => {
             let rt = refresh.ok_or((
                 StatusCode::BAD_REQUEST,
                 "OneDrive 需要 refresh_token".to_string(),
             ))?;
-            ("onedrive", Credential::Onedrive {
-                region: req
-                    .region
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("global")
-                    .to_string(),
-                is_sharepoint: req.is_sharepoint,
-                site_id: req.site_id.clone().unwrap_or_default(),
-                root_path: req
-                    .root_path
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("/")
-                    .to_string(),
-                refresh_token: rt,
-                access_token: String::new(),
-            })
+            (
+                "onedrive",
+                Credential::Onedrive {
+                    region: req
+                        .region
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("global")
+                        .to_string(),
+                    is_sharepoint: req.is_sharepoint,
+                    site_id: req.site_id.clone().unwrap_or_default(),
+                    root_path: req
+                        .root_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("/")
+                        .to_string(),
+                    refresh_token: rt,
+                    access_token: String::new(),
+                },
+            )
         }
         "google_drive" | "google" | "googledrive" => {
             let rt = refresh.ok_or((
                 StatusCode::BAD_REQUEST,
                 "Google Drive 需要 refresh_token".to_string(),
             ))?;
-            ("google_drive", Credential::GoogleDrive {
-                refresh_token: rt,
-                access_token: String::new(),
-                root_folder_id: req.root_folder_id.clone().unwrap_or_default(),
-            })
+            (
+                "google_drive",
+                Credential::GoogleDrive {
+                    refresh_token: rt,
+                    access_token: String::new(),
+                    root_folder_id: req.root_folder_id.clone().unwrap_or_default(),
+                },
+            )
         }
 
         "s3" => {
-            let bucket = req.bucket.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let bucket = req
+                .bucket
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 bucket".to_string()))?;
-            let endpoint = req.endpoint.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let endpoint = req
+                .endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 endpoint".to_string()))?;
-            let access_key_id = req.access_key_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let access_key_id = req
+                .access_key_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 access_key_id".to_string()))?;
-            let secret_access_key = req.secret_access_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "S3 需要 secret_access_key".to_string()))?;
-            ("s3", Credential::S3 {
-                bucket: bucket.to_string(),
-                endpoint: endpoint.to_string(),
-                region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                session_token: req.session_token.clone().unwrap_or_default(),
-                custom_host: req.custom_host.clone().unwrap_or_default(),
-                force_path_style: req.force_path_style.unwrap_or(false),
-                sign_url_expire: req.sign_url_expire.unwrap_or(4),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let secret_access_key = req
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "S3 需要 secret_access_key".to_string(),
+                ))?;
+            (
+                "s3",
+                Credential::S3 {
+                    bucket: bucket.to_string(),
+                    endpoint: endpoint.to_string(),
+                    region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
+                    access_key_id: access_key_id.to_string(),
+                    secret_access_key: secret_access_key.to_string(),
+                    session_token: req.session_token.clone().unwrap_or_default(),
+                    custom_host: req.custom_host.clone().unwrap_or_default(),
+                    force_path_style: req.force_path_style.unwrap_or(false),
+                    sign_url_expire: req.sign_url_expire.unwrap_or(4),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "sftp" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SFTP 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SFTP 需要 username".to_string()))?;
-            ("sftp", Credential::Sftp {
-                address: address.to_string(),
-                username: username.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-                private_key: req.private_key.clone().unwrap_or_default(),
-                passphrase: req.passphrase.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-                ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
-            })
+            (
+                "sftp",
+                Credential::Sftp {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                    private_key: req.private_key.clone().unwrap_or_default(),
+                    passphrase: req.passphrase.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                    ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                },
+            )
         }
         "ftp" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "FTP 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "FTP 需要 username".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("ftp", Credential::Ftp {
-                address: address.to_string(),
-                username: username.to_string(),
-                password,
-                encoding: req.encoding.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-                cwd_list: req.cwd_list.unwrap_or(false),
-            })
+            (
+                "ftp",
+                Credential::Ftp {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password,
+                    encoding: req.encoding.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                    cwd_list: req.cwd_list.unwrap_or(false),
+                },
+            )
         }
         "smb" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 username".to_string()))?;
-            let share_name = req.share_name.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let share_name = req
+                .share_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 share_name".to_string()))?;
-            ("smb", Credential::Smb {
-                address: address.to_string(),
-                username: username.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-                share_name: share_name.to_string(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-            })
+            (
+                "smb",
+                Credential::Smb {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                    share_name: share_name.to_string(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                },
+            )
         }
         "alist_v3" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "AList V3 需要 url".to_string()))?;
-            ("alist_v3", Credential::AlistV3 {
-                url: url.to_string(),
-                meta_password: req.meta_password.clone().unwrap_or_default(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-            })
+            (
+                "alist_v3",
+                Credential::AlistV3 {
+                    url: url.to_string(),
+                    meta_password: req.meta_password.clone().unwrap_or_default(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                },
+            )
         }
         "github_releases" => {
-            let repo_structure = req.repo_structure.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "GitHub Releases 需要 repo_structure".to_string()))?;
-            ("github_releases", Credential::GithubReleases {
-                repo_structure: repo_structure.to_string(),
-                token: req.token.clone().unwrap_or_default(),
-                show_all_version: req.show_all_version.unwrap_or(false),
-                show_source_code: req.show_source_code.unwrap_or(false),
-                gh_proxy: req.gh_proxy.clone().unwrap_or_default(),
-                per_page: req.per_page.unwrap_or(30),
-                max_page: req.max_page.unwrap_or(0),
-            })
+            let repo_structure = req
+                .repo_structure
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "GitHub Releases 需要 repo_structure".to_string(),
+                ))?;
+            (
+                "github_releases",
+                Credential::GithubReleases {
+                    repo_structure: repo_structure.to_string(),
+                    token: req.token.clone().unwrap_or_default(),
+                    show_all_version: req.show_all_version.unwrap_or(false),
+                    show_source_code: req.show_source_code.unwrap_or(false),
+                    gh_proxy: req.gh_proxy.clone().unwrap_or_default(),
+                    per_page: req.per_page.unwrap_or(30),
+                    max_page: req.max_page.unwrap_or(0),
+                },
+            )
         }
         "pikpak" => {
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "PikPak 需要 username".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("pikpak", Credential::PikPak {
-                username: username.to_string(),
-                password,
-                refresh_token: req.refresh_token.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                device_id: req.device_id.clone().unwrap_or_default(),
-            })
+            (
+                "pikpak",
+                Credential::PikPak {
+                    username: username.to_string(),
+                    password,
+                    refresh_token: req.refresh_token.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    device_id: req.device_id.clone().unwrap_or_default(),
+                },
+            )
         }
         "onedrive_share" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OneDrive 分享需要 url".to_string()))?;
-            ("onedrive_share", Credential::OnedriveShare {
-                url: url.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-            })
+            (
+                "onedrive_share",
+                Credential::OnedriveShare {
+                    url: url.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                },
+            )
         }
         "dropbox" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Dropbox 需要 refresh_token".to_string()))?;
-            ("dropbox", Credential::Dropbox {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Dropbox 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "dropbox",
+                Credential::Dropbox {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                },
+            )
         }
         "google_photo" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Google Photos 需要 refresh_token".to_string()))?;
-            ("google_photo", Credential::GooglePhoto {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Google Photos 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "google_photo",
+                Credential::GooglePhoto {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                },
+            )
         }
         "pan115_open" | "115_open" => {
             let access_token = req.access_token.clone().unwrap_or_default();
             let refresh_token = req.refresh_token.clone().unwrap_or_default();
             if access_token.is_empty() && refresh_token.is_empty() {
-                return Err((StatusCode::BAD_REQUEST, "115 Open 需要 access_token 或 refresh_token".into()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "115 Open 需要 access_token 或 refresh_token".into(),
+                ));
             }
-            ("pan115_open", Credential::Pan115Open { access_token, refresh_token })
+            (
+                "pan115_open",
+                Credential::Pan115Open {
+                    access_token,
+                    refresh_token,
+                },
+            )
         }
         "pan115_share" | "115_share" => {
-            let share_code = req.share_code.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "115 分享需要 share_code".to_string()))?;
-            ("pan115_share", Credential::Pan115Share {
-                cookie: req.cookie.clone().unwrap_or_default(),
-                share_code: share_code.to_string(),
-                receive_code: req.receive_code.clone().unwrap_or_default(),
-            })
+            let share_code = req
+                .share_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "115 分享需要 share_code".to_string(),
+                ))?;
+            (
+                "pan115_share",
+                Credential::Pan115Share {
+                    cookie: req.cookie.clone().unwrap_or_default(),
+                    share_code: share_code.to_string(),
+                    receive_code: req.receive_code.clone().unwrap_or_default(),
+                },
+            )
         }
-        "pan123_open" | "123_open" => {
-            ("pan123_open", Credential::Pan123Open {
+        "pan123_open" | "123_open" => (
+            "pan123_open",
+            Credential::Pan123Open {
                 client_id: req.client_id.clone().unwrap_or_default(),
                 client_secret: req.client_secret.clone().unwrap_or_default(),
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 use_online_api: req.use_online_api.unwrap_or(true),
                 api_address: req.api_address.clone().unwrap_or_default(),
-            })
-        }
+            },
+        ),
         "pan123_link" | "123_link" => {
-            let origin_urls = req.origin_urls.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "123PanLink 需要 origin_urls".to_string()))?;
-            ("pan123_link", Credential::Pan123Link {
-                origin_urls: origin_urls.to_string(),
-                private_key: req.private_key.clone().unwrap_or_default(),
-                uid: req.uid.unwrap_or(0),
-                valid_duration: req.valid_duration.unwrap_or(30),
-            })
+            let origin_urls = req
+                .origin_urls
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "123PanLink 需要 origin_urls".to_string(),
+                ))?;
+            (
+                "pan123_link",
+                Credential::Pan123Link {
+                    origin_urls: origin_urls.to_string(),
+                    private_key: req.private_key.clone().unwrap_or_default(),
+                    uid: req.uid.unwrap_or(0),
+                    valid_duration: req.valid_duration.unwrap_or(30),
+                },
+            )
         }
         "aliyundrive" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "阿里云盘(旧)需要 refresh_token".to_string()))?;
-            ("aliyundrive", Credential::Aliyundrive {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "阿里云盘(旧)需要 refresh_token".to_string(),
+                ))?;
+            (
+                "aliyundrive",
+                Credential::Aliyundrive {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                },
+            )
         }
         "aliyundrive_share" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "阿里分享需要 refresh_token".to_string()))?;
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "阿里分享需要 refresh_token".to_string(),
+                ))?;
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "阿里分享需要 share_id".to_string()))?;
-            ("aliyundrive_share", Credential::AliyundriveShare {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-            })
+            (
+                "aliyundrive_share",
+                Credential::AliyundriveShare {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                },
+            )
         }
         "quark_open" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 refresh_token".to_string()))?;
-            let app_id = req.app_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "夸克 Open 需要 refresh_token".to_string(),
+                ))?;
+            let app_id = req
+                .app_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 app_id".to_string()))?;
-            let sign_key = req.sign_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 sign_key".to_string()))?;
-            ("quark_open", Credential::QuarkOpen {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                app_id: app_id.to_string(),
-                sign_key: sign_key.to_string(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                api_address: req.api_address.clone().unwrap_or_default(),
-            })
+            let sign_key = req
+                .sign_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "夸克 Open 需要 sign_key".to_string(),
+                ))?;
+            (
+                "quark_open",
+                Credential::QuarkOpen {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    app_id: app_id.to_string(),
+                    sign_key: sign_key.to_string(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    api_address: req.api_address.clone().unwrap_or_default(),
+                },
+            )
         }
-        "quark_tv" => {
-            ("quark_tv", Credential::QuarkTv {
+        "quark_tv" => (
+            "quark_tv",
+            Credential::QuarkTv {
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 device_id: req.device_id.clone().unwrap_or_default(),
                 link_method: req.link_method.clone().unwrap_or_else(|| "download".into()),
-            })
-        }
-        "uc_tv" => {
-            ("uc_tv", Credential::UcTv {
+            },
+        ),
+        "uc_tv" => (
+            "uc_tv",
+            Credential::UcTv {
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 device_id: req.device_id.clone().unwrap_or_default(),
                 link_method: req.link_method.clone().unwrap_or_else(|| "download".into()),
-            })
-        }
+            },
+        ),
 
         "pikpak_share" => {
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "PikPak 分享需要 share_id".to_string()))?;
-            ("pikpak_share", Credential::PikPakShare {
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-                platform: req.platform.clone().unwrap_or_else(|| "web".into()),
-                device_id: req.device_id.clone().unwrap_or_default(),
-                use_transcoding_address: req.use_transcoding_address.unwrap_or(false),
-            })
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "PikPak 分享需要 share_id".to_string(),
+                ))?;
+            (
+                "pikpak_share",
+                Credential::PikPakShare {
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                    platform: req.platform.clone().unwrap_or_else(|| "web".into()),
+                    device_id: req.device_id.clone().unwrap_or_default(),
+                    use_transcoding_address: req.use_transcoding_address.unwrap_or(false),
+                },
+            )
         }
         "onedrive_app" => {
-            let client_id = req.client_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要 client_id".to_string()))?;
-            let client_secret = req.client_secret.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要 client_secret".to_string()))?;
-            let email = req.email.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要用户邮箱 email".to_string()))?;
-            ("onedrive_app", Credential::OnedriveApp {
-                region: req.region.clone().unwrap_or_else(|| "global".into()),
-                client_id: client_id.to_string(),
-                client_secret: client_secret.to_string(),
-                tenant_id: req.tenant_id.clone().unwrap_or_default(),
-                email: email.to_string(),
-                custom_host: req.custom_host.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let client_id = req
+                .client_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要 client_id".to_string(),
+                ))?;
+            let client_secret = req
+                .client_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要 client_secret".to_string(),
+                ))?;
+            let email = req
+                .email
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要用户邮箱 email".to_string(),
+                ))?;
+            (
+                "onedrive_app",
+                Credential::OnedriveApp {
+                    region: req.region.clone().unwrap_or_else(|| "global".into()),
+                    client_id: client_id.to_string(),
+                    client_secret: client_secret.to_string(),
+                    tenant_id: req.tenant_id.clone().unwrap_or_default(),
+                    email: email.to_string(),
+                    custom_host: req.custom_host.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "openlist" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OpenList 需要 url".to_string()))?;
-            ("openlist", Credential::Openlist {
-                url: url.to_string(),
-                meta_password: req.meta_password.clone().unwrap_or_default(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-            })
+            (
+                "openlist",
+                Credential::Openlist {
+                    url: url.to_string(),
+                    meta_password: req.meta_password.clone().unwrap_or_default(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                },
+            )
         }
         "openlist_share" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OpenList 分享需要 url".to_string()))?;
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OpenList 分享需要 share_id".to_string()))?;
-            ("openlist_share", Credential::OpenlistShare {
-                url: url.to_string(),
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-            })
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OpenList 分享需要 share_id".to_string(),
+                ))?;
+            (
+                "openlist_share",
+                Credential::OpenlistShare {
+                    url: url.to_string(),
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                },
+            )
         }
-        "virtual" => {
-            ("virtual", Credential::Virtual {
+        "virtual" => (
+            "virtual",
+            Credential::Virtual {
                 num_file: req.num_file.unwrap_or(5),
                 num_folder: req.num_folder.unwrap_or(0),
-            })
-        }
+            },
+        ),
         "bunny" => {
-            let bucket = req.bucket.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let bucket = req
+                .bucket
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 bucket".to_string()))?;
-            let access_key_id = req.access_key_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 access_key_id".to_string()))?;
-            let secret_access_key = req.secret_access_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 secret_access_key".to_string()))?;
-            ("bunny", Credential::Bunny {
-                bucket: bucket.to_string(),
-                endpoint: req.endpoint.clone().unwrap_or_default(),
-                region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let access_key_id = req
+                .access_key_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Bunny 需要 access_key_id".to_string(),
+                ))?;
+            let secret_access_key = req
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Bunny 需要 secret_access_key".to_string(),
+                ))?;
+            (
+                "bunny",
+                Credential::Bunny {
+                    bucket: bucket.to_string(),
+                    endpoint: req.endpoint.clone().unwrap_or_default(),
+                    region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
+                    access_key_id: access_key_id.to_string(),
+                    secret_access_key: secret_access_key.to_string(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "yandex_disk" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Yandex.Disk 需要 refresh_token".to_string()))?;
-            ("yandex_disk", Credential::YandexDisk {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                api_address: req.api_address.clone().unwrap_or_default(),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Yandex.Disk 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "yandex_disk",
+                Credential::YandexDisk {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    api_address: req.api_address.clone().unwrap_or_default(),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "seafile" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "Seafile 需要 address".to_string()))?;
-            ("seafile", Credential::Seafile {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-                repo_id: req.repo_id.clone().unwrap_or_default(),
-                repo_pwd: req.repo_pwd.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            (
+                "seafile",
+                Credential::Seafile {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                    repo_id: req.repo_id.clone().unwrap_or_default(),
+                    repo_pwd: req.repo_pwd.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "kodbox" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "KodBox 需要 address".to_string()))?;
-            ("kodbox", Credential::Kodbox {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-            })
+            (
+                "kodbox",
+                Credential::Kodbox {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                },
+            )
         }
         "cloudreve_v4" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Cloudreve V4 需要 address".to_string()))?;
-            ("cloudreve_v4", Credential::CloudreveV4 {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                refresh_token: req.refresh_token.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Cloudreve V4 需要 address".to_string(),
+                ))?;
+            (
+                "cloudreve_v4",
+                Credential::CloudreveV4 {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    refresh_token: req.refresh_token.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "terabox" => {
-            let cookie = cookie.ok_or((StatusCode::BAD_REQUEST, "Terabox 需要 cookie".to_string()))?;
-            ("terabox", Credential::Terabox {
-                cookie,
-                download_api: req.download_api.clone().unwrap_or_else(|| "official".into()),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let cookie =
+                cookie.ok_or((StatusCode::BAD_REQUEST, "Terabox 需要 cookie".to_string()))?;
+            (
+                "terabox",
+                Credential::Terabox {
+                    cookie,
+                    download_api: req
+                        .download_api
+                        .clone()
+                        .unwrap_or_else(|| "official".into()),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "ilanzou" => {
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "蓝奏云优创需要账号".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("ilanzou", Credential::Ilanzou {
-                site: req.site.clone().unwrap_or_else(|| "ilanzou".into()),
-                username: username.to_string(),
-                password,
-                root_folder_id: req.root_folder_id.clone().unwrap_or_else(|| "0".into()),
-            })
+            (
+                "ilanzou",
+                Credential::Ilanzou {
+                    site: req.site.clone().unwrap_or_else(|| "ilanzou".into()),
+                    username: username.to_string(),
+                    password,
+                    root_folder_id: req.root_folder_id.clone().unwrap_or_else(|| "0".into()),
+                },
+            )
         }
         other => {
             return Err((
@@ -996,13 +1358,21 @@ pub(crate) async fn add_account(
     {
         let mut data = st.store.data.lock().unwrap();
         data.accounts.push(acc.clone());
-        st.store
-            .save(&data)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存配置失败: {e}")))?;
+        st.store.save(&data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("保存配置失败: {e}"),
+            )
+        })?;
     }
-    st.drivers.lock().unwrap().insert(id.clone(), Arc::new(driver));
+    st.drivers
+        .lock()
+        .unwrap()
+        .insert(id.clone(), Arc::new(driver));
 
-    Ok(Json(json!({ "id": id, "name": acc.name, "driver": driver_kind })))
+    Ok(Json(
+        json!({ "id": id, "name": acc.name, "driver": driver_kind }),
+    ))
 }
 
 /// GET /api/accounts/{id}/secret —— 返回该账号的凭据明细，仅用于编辑表单回填
@@ -1035,12 +1405,18 @@ pub(crate) async fn get_account_secret(
             out["driver"] = json!("quark_uc");
             out["cookie"] = json!(cookie);
         }
-        Credential::Pan123 { username, password, .. } => {
+        Credential::Pan123 {
+            username, password, ..
+        } => {
             out["driver"] = json!("123pan");
             out["username"] = json!(username);
             out["password"] = json!(password);
         }
-        Credential::AliyundriveOpen { refresh_token, alipan_type, .. } => {
+        Credential::AliyundriveOpen {
+            refresh_token,
+            alipan_type,
+            ..
+        } => {
             out["driver"] = json!("aliyundrive_open");
             out["refresh_token"] = json!(refresh_token);
             out["alipan_type"] = json!(alipan_type);
@@ -1053,23 +1429,34 @@ pub(crate) async fn get_account_secret(
             out["driver"] = json!("pan115");
             out["cookie"] = json!(cookie);
         }
-        Credential::Thunder { username, password, .. } => {
+        Credential::Thunder {
+            username, password, ..
+        } => {
             out["driver"] = json!("thunder");
             out["username"] = json!(username);
             out["password"] = json!(password);
         }
-        Credential::Lanzou { cookie, account, password } => {
+        Credential::Lanzou {
+            cookie,
+            account,
+            password,
+        } => {
             out["driver"] = json!("lanzou");
             out["cookie"] = json!(cookie);
             out["username"] = json!(account);
             out["password"] = json!(password);
         }
-        Credential::Yun139 { authorization, drive_type } => {
+        Credential::Yun139 {
+            authorization,
+            drive_type,
+        } => {
             out["driver"] = json!("pan139");
             out["authorization"] = json!(authorization);
             out["drive_type"] = json!(drive_type);
         }
-        Credential::Cloud189 { username, password, .. } => {
+        Credential::Cloud189 {
+            username, password, ..
+        } => {
             out["driver"] = json!("cloud189");
             out["username"] = json!(username);
             out["password"] = json!(password);
@@ -1078,25 +1465,44 @@ pub(crate) async fn get_account_secret(
             out["driver"] = json!("local");
             out["root_path"] = json!(root_path);
         }
-        Credential::Webdav { url, username, password, root_path } => {
+        Credential::Webdav {
+            url,
+            username,
+            password,
+            root_path,
+        } => {
             out["driver"] = json!("webdav");
             out["url"] = json!(url);
             out["username"] = json!(username);
             out["password"] = json!(password);
             out["root_path"] = json!(root_path);
         }
-        Credential::Pan123Share { share_key, share_pwd, access_token } => {
+        Credential::Pan123Share {
+            share_key,
+            share_pwd,
+            access_token,
+        } => {
             out["driver"] = json!("123pan_share");
             out["share_key"] = json!(share_key);
             out["share_pwd"] = json!(share_pwd);
             out["access_token"] = json!(access_token);
         }
-        Credential::Weiyun { cookies, root_folder_id } => {
+        Credential::Weiyun {
+            cookies,
+            root_folder_id,
+        } => {
             out["driver"] = json!("weiyun");
             out["cookies"] = json!(cookies);
             out["root_folder_id"] = json!(root_folder_id);
         }
-        Credential::Onedrive { region, is_sharepoint, site_id, root_path, refresh_token, .. } => {
+        Credential::Onedrive {
+            region,
+            is_sharepoint,
+            site_id,
+            root_path,
+            refresh_token,
+            ..
+        } => {
             out["driver"] = json!("onedrive");
             out["region"] = json!(region);
             out["is_sharepoint"] = json!(is_sharepoint);
@@ -1104,14 +1510,26 @@ pub(crate) async fn get_account_secret(
             out["root_path"] = json!(root_path);
             out["refresh_token"] = json!(refresh_token);
         }
-        Credential::GoogleDrive { refresh_token, root_folder_id, .. } => {
+        Credential::GoogleDrive {
+            refresh_token,
+            root_folder_id,
+            ..
+        } => {
             out["driver"] = json!("google_drive");
             out["refresh_token"] = json!(refresh_token);
             out["root_folder_id"] = json!(root_folder_id);
         }
         Credential::S3 {
-            bucket, endpoint, region, access_key_id, secret_access_key,
-            session_token, custom_host, force_path_style, sign_url_expire, root_path,
+            bucket,
+            endpoint,
+            region,
+            access_key_id,
+            secret_access_key,
+            session_token,
+            custom_host,
+            force_path_style,
+            sign_url_expire,
+            root_path,
         } => {
             out["driver"] = json!("s3");
             out["bucket"] = json!(bucket);
@@ -1126,7 +1544,13 @@ pub(crate) async fn get_account_secret(
             out["root_path"] = json!(root_path);
         }
         Credential::Sftp {
-            address, username, password, private_key, passphrase, root_path, ignore_symlink_error,
+            address,
+            username,
+            password,
+            private_key,
+            passphrase,
+            root_path,
+            ignore_symlink_error,
         } => {
             out["driver"] = json!("sftp");
             out["address"] = json!(address);
@@ -1138,7 +1562,12 @@ pub(crate) async fn get_account_secret(
             out["ignore_symlink_error"] = json!(ignore_symlink_error);
         }
         Credential::Ftp {
-            address, username, password, encoding, root_path, cwd_list,
+            address,
+            username,
+            password,
+            encoding,
+            root_path,
+            cwd_list,
         } => {
             out["driver"] = json!("ftp");
             out["address"] = json!(address);
@@ -1149,7 +1578,11 @@ pub(crate) async fn get_account_secret(
             out["cwd_list"] = json!(cwd_list);
         }
         Credential::Smb {
-            address, username, password, share_name, root_path,
+            address,
+            username,
+            password,
+            share_name,
+            root_path,
         } => {
             out["driver"] = json!("smb");
             out["address"] = json!(address);
@@ -1159,7 +1592,11 @@ pub(crate) async fn get_account_secret(
             out["root_path"] = json!(root_path);
         }
         Credential::AlistV3 {
-            url, meta_password, username, password, token,
+            url,
+            meta_password,
+            username,
+            password,
+            token,
         } => {
             out["driver"] = json!("alist_v3");
             out["url"] = json!(url);
@@ -1169,7 +1606,13 @@ pub(crate) async fn get_account_secret(
             out["token"] = json!(token);
         }
         Credential::GithubReleases {
-            repo_structure, token, show_all_version, show_source_code, gh_proxy, per_page, max_page,
+            repo_structure,
+            token,
+            show_all_version,
+            show_source_code,
+            gh_proxy,
+            per_page,
+            max_page,
         } => {
             out["driver"] = json!("github_releases");
             out["repo_structure"] = json!(repo_structure);
@@ -1181,7 +1624,11 @@ pub(crate) async fn get_account_secret(
             out["max_page"] = json!(max_page);
         }
         Credential::PikPak {
-            username, password, refresh_token, access_token, device_id,
+            username,
+            password,
+            refresh_token,
+            access_token,
+            device_id,
         } => {
             out["driver"] = json!("pikpak");
             out["username"] = json!(username);
@@ -1196,7 +1643,12 @@ pub(crate) async fn get_account_secret(
             out["password"] = json!(password);
         }
         Credential::Dropbox {
-            refresh_token, access_token, root_path, use_online_api, client_id, client_secret,
+            refresh_token,
+            access_token,
+            root_path,
+            use_online_api,
+            client_id,
+            client_secret,
         } => {
             out["driver"] = json!("dropbox");
             out["refresh_token"] = json!(refresh_token);
@@ -1207,7 +1659,10 @@ pub(crate) async fn get_account_secret(
             out["client_secret"] = json!(client_secret);
         }
         Credential::GooglePhoto {
-            refresh_token, access_token, client_id, client_secret,
+            refresh_token,
+            access_token,
+            client_id,
+            client_secret,
         } => {
             out["driver"] = json!("google_photo");
             out["refresh_token"] = json!(refresh_token);
@@ -1215,18 +1670,32 @@ pub(crate) async fn get_account_secret(
             out["client_id"] = json!(client_id);
             out["client_secret"] = json!(client_secret);
         }
-        Credential::Pan115Open { access_token, refresh_token } => {
+        Credential::Pan115Open {
+            access_token,
+            refresh_token,
+        } => {
             out["driver"] = json!("pan115_open");
             out["access_token"] = json!(access_token);
             out["refresh_token"] = json!(refresh_token);
         }
-        Credential::Pan115Share { cookie, share_code, receive_code } => {
+        Credential::Pan115Share {
+            cookie,
+            share_code,
+            receive_code,
+        } => {
             out["driver"] = json!("pan115_share");
             out["cookie"] = json!(cookie);
             out["share_code"] = json!(share_code);
             out["receive_code"] = json!(receive_code);
         }
-        Credential::Pan123Open { client_id, client_secret, refresh_token, access_token, use_online_api, api_address } => {
+        Credential::Pan123Open {
+            client_id,
+            client_secret,
+            refresh_token,
+            access_token,
+            use_online_api,
+            api_address,
+        } => {
             out["driver"] = json!("pan123_open");
             out["client_id"] = json!(client_id);
             out["client_secret"] = json!(client_secret);
@@ -1235,26 +1704,46 @@ pub(crate) async fn get_account_secret(
             out["use_online_api"] = json!(use_online_api);
             out["api_address"] = json!(api_address);
         }
-        Credential::Pan123Link { origin_urls, private_key, uid, valid_duration } => {
+        Credential::Pan123Link {
+            origin_urls,
+            private_key,
+            uid,
+            valid_duration,
+        } => {
             out["driver"] = json!("pan123_link");
             out["origin_urls"] = json!(origin_urls);
             out["private_key"] = json!(private_key);
             out["uid"] = json!(uid);
             out["valid_duration"] = json!(valid_duration);
         }
-        Credential::Aliyundrive { refresh_token, access_token } => {
+        Credential::Aliyundrive {
+            refresh_token,
+            access_token,
+        } => {
             out["driver"] = json!("aliyundrive");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
         }
-        Credential::AliyundriveShare { refresh_token, access_token, share_id, share_pwd } => {
+        Credential::AliyundriveShare {
+            refresh_token,
+            access_token,
+            share_id,
+            share_pwd,
+        } => {
             out["driver"] = json!("aliyundrive_share");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
             out["share_id"] = json!(share_id);
             out["share_pwd"] = json!(share_pwd);
         }
-        Credential::QuarkOpen { refresh_token, access_token, app_id, sign_key, use_online_api, api_address } => {
+        Credential::QuarkOpen {
+            refresh_token,
+            access_token,
+            app_id,
+            sign_key,
+            use_online_api,
+            api_address,
+        } => {
             out["driver"] = json!("quark_open");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
@@ -1263,14 +1752,24 @@ pub(crate) async fn get_account_secret(
             out["use_online_api"] = json!(use_online_api);
             out["api_address"] = json!(api_address);
         }
-        Credential::QuarkTv { refresh_token, access_token, device_id, link_method } => {
+        Credential::QuarkTv {
+            refresh_token,
+            access_token,
+            device_id,
+            link_method,
+        } => {
             out["driver"] = json!("quark_tv");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
             out["device_id"] = json!(device_id);
             out["link_method"] = json!(link_method);
         }
-        Credential::UcTv { refresh_token, access_token, device_id, link_method } => {
+        Credential::UcTv {
+            refresh_token,
+            access_token,
+            device_id,
+            link_method,
+        } => {
             out["driver"] = json!("uc_tv");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
@@ -1278,7 +1777,11 @@ pub(crate) async fn get_account_secret(
             out["link_method"] = json!(link_method);
         }
         Credential::PikPakShare {
-            share_id, share_pwd, platform, device_id, use_transcoding_address,
+            share_id,
+            share_pwd,
+            platform,
+            device_id,
+            use_transcoding_address,
         } => {
             out["driver"] = json!("pikpak_share");
             out["share_id"] = json!(share_id);
@@ -1288,7 +1791,13 @@ pub(crate) async fn get_account_secret(
             out["use_transcoding_address"] = json!(use_transcoding_address);
         }
         Credential::OnedriveApp {
-            region, client_id, client_secret, tenant_id, email, custom_host, root_path,
+            region,
+            client_id,
+            client_secret,
+            tenant_id,
+            email,
+            custom_host,
+            root_path,
         } => {
             out["driver"] = json!("onedrive_app");
             out["region"] = json!(region);
@@ -1299,7 +1808,13 @@ pub(crate) async fn get_account_secret(
             out["custom_host"] = json!(custom_host);
             out["root_path"] = json!(root_path);
         }
-        Credential::Openlist { url, meta_password, username, password, token } => {
+        Credential::Openlist {
+            url,
+            meta_password,
+            username,
+            password,
+            token,
+        } => {
             out["driver"] = json!("openlist");
             out["url"] = json!(url);
             out["meta_password"] = json!(meta_password);
@@ -1307,18 +1822,32 @@ pub(crate) async fn get_account_secret(
             out["password"] = json!(password);
             out["token"] = json!(token);
         }
-        Credential::OpenlistShare { url, share_id, share_pwd } => {
+        Credential::OpenlistShare {
+            url,
+            share_id,
+            share_pwd,
+        } => {
             out["driver"] = json!("openlist_share");
             out["url"] = json!(url);
             out["share_id"] = json!(share_id);
             out["share_pwd"] = json!(share_pwd);
         }
-        Credential::Virtual { num_file, num_folder } => {
+        Credential::Virtual {
+            num_file,
+            num_folder,
+        } => {
             out["driver"] = json!("virtual");
             out["num_file"] = json!(num_file);
             out["num_folder"] = json!(num_folder);
         }
-        Credential::Bunny { bucket, endpoint, region, access_key_id, secret_access_key, root_path } => {
+        Credential::Bunny {
+            bucket,
+            endpoint,
+            region,
+            access_key_id,
+            secret_access_key,
+            root_path,
+        } => {
             out["driver"] = json!("bunny");
             out["bucket"] = json!(bucket);
             out["endpoint"] = json!(endpoint);
@@ -1327,7 +1856,15 @@ pub(crate) async fn get_account_secret(
             out["secret_access_key"] = json!(secret_access_key);
             out["root_path"] = json!(root_path);
         }
-        Credential::YandexDisk { refresh_token, access_token, use_online_api, api_address, client_id, client_secret, root_path } => {
+        Credential::YandexDisk {
+            refresh_token,
+            access_token,
+            use_online_api,
+            api_address,
+            client_id,
+            client_secret,
+            root_path,
+        } => {
             out["driver"] = json!("yandex_disk");
             out["refresh_token"] = json!(refresh_token);
             out["access_token"] = json!(access_token);
@@ -1337,7 +1874,15 @@ pub(crate) async fn get_account_secret(
             out["client_secret"] = json!(client_secret);
             out["root_path"] = json!(root_path);
         }
-        Credential::Seafile { address, username, password, token, repo_id, repo_pwd, root_path } => {
+        Credential::Seafile {
+            address,
+            username,
+            password,
+            token,
+            repo_id,
+            repo_pwd,
+            root_path,
+        } => {
             out["driver"] = json!("seafile");
             out["address"] = json!(address);
             out["username"] = json!(username);
@@ -1347,14 +1892,26 @@ pub(crate) async fn get_account_secret(
             out["repo_pwd"] = json!(repo_pwd);
             out["root_path"] = json!(root_path);
         }
-        Credential::Kodbox { address, username, password, root_path } => {
+        Credential::Kodbox {
+            address,
+            username,
+            password,
+            root_path,
+        } => {
             out["driver"] = json!("kodbox");
             out["address"] = json!(address);
             out["username"] = json!(username);
             out["password"] = json!(password);
             out["root_path"] = json!(root_path);
         }
-        Credential::CloudreveV4 { address, username, password, access_token, refresh_token, root_path } => {
+        Credential::CloudreveV4 {
+            address,
+            username,
+            password,
+            access_token,
+            refresh_token,
+            root_path,
+        } => {
             out["driver"] = json!("cloudreve_v4");
             out["address"] = json!(address);
             out["username"] = json!(username);
@@ -1363,13 +1920,22 @@ pub(crate) async fn get_account_secret(
             out["refresh_token"] = json!(refresh_token);
             out["root_path"] = json!(root_path);
         }
-        Credential::Terabox { cookie, download_api, root_path } => {
+        Credential::Terabox {
+            cookie,
+            download_api,
+            root_path,
+        } => {
             out["driver"] = json!("terabox");
             out["cookie"] = json!(cookie);
             out["download_api"] = json!(download_api);
             out["root_path"] = json!(root_path);
         }
-        Credential::Ilanzou { site, username, password, root_folder_id } => {
+        Credential::Ilanzou {
+            site,
+            username,
+            password,
+            root_folder_id,
+        } => {
             out["driver"] = json!("ilanzou");
             out["site"] = json!(site);
             out["username"] = json!(username);
@@ -1393,9 +1959,12 @@ pub(crate) async fn del_account(
         if data.accounts.len() == before {
             return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
         }
-        st.store
-            .save(&data)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存配置失败: {e}")))?;
+        st.store.save(&data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("保存配置失败: {e}"),
+            )
+        })?;
     }
     st.drivers.lock().unwrap().remove(&id);
     // 账号已删除，清空其全部目录缓存
@@ -1559,9 +2128,15 @@ pub(crate) async fn get_download(
         qs.append_pair("name", q.name.as_deref().unwrap_or(""));
         qs.append_pair("size", &q.size.unwrap_or(0).to_string());
         qs.append_pair("disp", "inline");
-        if let Some(ref etag) = q.etag { qs.append_pair("etag", etag); }
-        if let Some(ref s3k) = q.s3key { qs.append_pair("s3key", s3k); }
-        if let Some(ft) = q.ftype { qs.append_pair("ftype", &ft.to_string()); }
+        if let Some(ref etag) = q.etag {
+            qs.append_pair("etag", etag);
+        }
+        if let Some(ref s3k) = q.s3key {
+            qs.append_pair("s3key", s3k);
+        }
+        if let Some(ft) = q.ftype {
+            qs.append_pair("ftype", &ft.to_string());
+        }
         if let Some(ref extra) = q.extra {
             qs.append_pair("extra", &extra.to_string());
         }
@@ -1658,8 +2233,8 @@ pub(crate) async fn proxy_stream(
         break resp;
     };
     let status = upstream.status();
-    let mut resp_builder = Response::builder()
-        .status(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK));
+    let mut resp_builder =
+        Response::builder().status(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::OK));
     for h in [
         header::CONTENT_LENGTH,
         header::CONTENT_RANGE,
@@ -1673,7 +2248,11 @@ pub(crate) async fn proxy_stream(
         }
     }
     // Content-Disposition：inline 在线播放 / attachment 附件下载
-    let fname = if e.name.is_empty() { "download" } else { &e.name };
+    let fname = if e.name.is_empty() {
+        "download"
+    } else {
+        &e.name
+    };
     let encoded: String = fname
         .bytes()
         .map(|b| {
@@ -1691,9 +2270,12 @@ pub(crate) async fn proxy_stream(
 
     let stream = upstream.bytes_stream();
     let body = Body::from_stream(stream);
-    resp_builder
-        .body(body)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("构建响应失败: {e}")))
+    resp_builder.body(body).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("构建响应失败: {e}"),
+        )
+    })
 }
 
 /// 本机存储流式读取：支持 Range 断点/拖动播放（对齐 proxy_stream 的响应头行为）
@@ -1709,13 +2291,21 @@ async fn serve_local_file(
         if err.kind() == std::io::ErrorKind::NotFound {
             (StatusCode::NOT_FOUND, "文件不存在".into())
         } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("打开文件失败: {err}"))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("打开文件失败: {err}"),
+            )
         }
     })?;
     let total = file
         .metadata()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("读取文件信息失败: {e}")))?
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("读取文件信息失败: {e}"),
+            )
+        })?
         .len();
 
     // 解析 Range: bytes=start-end / bytes=start- / bytes=-suffix
@@ -1723,7 +2313,12 @@ async fn serve_local_file(
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
         .and_then(parse_range)
-        .map(|(start, end)| (start.min(total.saturating_sub(1)), end.min(total.saturating_sub(1))))
+        .map(|(start, end)| {
+            (
+                start.min(total.saturating_sub(1)),
+                end.min(total.saturating_sub(1)),
+            )
+        })
         .filter(|(start, end)| start <= end && *start < total);
 
     let (status, start, end, content_length) = match range {
@@ -1734,11 +2329,13 @@ async fn serve_local_file(
     let mut file = file;
     file.seek(std::io::SeekFrom::Start(start))
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("定位文件失败: {e}")))?;
-    let stream = tokio_util::io::ReaderStream::with_capacity(
-        file.take(content_length),
-        64 * 1024,
-    );
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("定位文件失败: {e}"),
+            )
+        })?;
+    let stream = tokio_util::io::ReaderStream::with_capacity(file.take(content_length), 64 * 1024);
 
     let mut resp = Response::builder().status(status);
     if status == StatusCode::PARTIAL_CONTENT {
@@ -1753,7 +2350,11 @@ async fn serve_local_file(
         .header(header::CONTENT_TYPE, content_type_by_ext(&e.name));
 
     // Content-Disposition：inline 在线播放 / attachment 附件下载
-    let fname = if e.name.is_empty() { "download" } else { &e.name };
+    let fname = if e.name.is_empty() {
+        "download"
+    } else {
+        &e.name
+    };
     let encoded: String = fname
         .bytes()
         .map(|b| {
@@ -1769,8 +2370,12 @@ async fn serve_local_file(
         format!("{disp}; filename*=UTF-8''{encoded}"),
     );
 
-    resp.body(Body::from_stream(stream))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("构建响应失败: {e}")))
+    resp.body(Body::from_stream(stream)).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("构建响应失败: {e}"),
+        )
+    })
 }
 
 /// 解析 "bytes=start-end" 形式的 Range 头（不含多区间）
@@ -1858,8 +2463,13 @@ pub(crate) async fn edit_account(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    let userpass = match (req.username.as_deref().map(str::trim), req.password.as_deref().map(str::trim)) {
-        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => Some((u.to_string(), p.to_string())),
+    let userpass = match (
+        req.username.as_deref().map(str::trim),
+        req.password.as_deref().map(str::trim),
+    ) {
+        (Some(u), Some(p)) if !u.is_empty() && !p.is_empty() => {
+            Some((u.to_string(), p.to_string()))
+        }
         _ => None,
     };
     let refresh = req
@@ -1887,12 +2497,13 @@ pub(crate) async fn edit_account(
         "quark_uc" | "uc" => (
             "quark_uc",
             Credential::QuarkUC {
-                cookie: cookie.ok_or((StatusCode::BAD_REQUEST, "UC 网盘需要 cookie".to_string()))?,
+                cookie: cookie
+                    .ok_or((StatusCode::BAD_REQUEST, "UC 网盘需要 cookie".to_string()))?,
             },
         ),
         "123pan" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "123 网盘需要账号密码".to_string()))?;
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "123 网盘需要账号密码".to_string()))?;
             (
                 "123pan",
                 Credential::Pan123 {
@@ -1939,8 +2550,8 @@ pub(crate) async fn edit_account(
             },
         ),
         "thunder" | "xunlei" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "迅雷网盘需要账号密码".to_string()))?;
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "迅雷网盘需要账号密码".to_string()))?;
             (
                 "thunder",
                 Credential::Thunder {
@@ -1962,7 +2573,14 @@ pub(crate) async fn edit_account(
                     "蓝奏云需要账号密码或 cookie".to_string(),
                 ));
             }
-            ("lanzou", Credential::Lanzou { cookie, account, password })
+            (
+                "lanzou",
+                Credential::Lanzou {
+                    cookie,
+                    account,
+                    password,
+                },
+            )
         }
         "pan139" | "139yun" | "mobile" => {
             let auth = req
@@ -1970,20 +2588,29 @@ pub(crate) async fn edit_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "移动云盘需要 139 Authorization".to_string()))?;
-            ("pan139", Credential::Yun139 {
-                authorization: auth.to_string(),
-                drive_type: "personal_new".into(),
-            })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "移动云盘需要 139 Authorization".to_string(),
+                ))?;
+            (
+                "pan139",
+                Credential::Yun139 {
+                    authorization: auth.to_string(),
+                    drive_type: "personal_new".into(),
+                },
+            )
         }
         "cloud189" | "189" | "tianyi" => {
-            let (u, p) = userpass
-                .ok_or((StatusCode::BAD_REQUEST, "天翼云盘需要账号密码".to_string()))?;
-            ("cloud189", Credential::Cloud189 {
-                username: u,
-                password: p,
-                cookie: String::new(),
-            })
+            let (u, p) =
+                userpass.ok_or((StatusCode::BAD_REQUEST, "天翼云盘需要账号密码".to_string()))?;
+            (
+                "cloud189",
+                Credential::Cloud189 {
+                    username: u,
+                    password: p,
+                    cookie: String::new(),
+                },
+            )
         }
         "local" => {
             let root_path = req
@@ -1991,8 +2618,16 @@ pub(crate) async fn edit_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "本机存储需要挂载目录路径".to_string()))?;
-            ("local", Credential::Local { root_path: root_path.to_string() })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "本机存储需要挂载目录路径".to_string(),
+                ))?;
+            (
+                "local",
+                Credential::Local {
+                    root_path: root_path.to_string(),
+                },
+            )
         }
         "webdav" => {
             let url = req
@@ -2001,18 +2636,21 @@ pub(crate) async fn edit_account(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "WebDAV 需要服务器地址".to_string()))?;
-            ("webdav", Credential::Webdav {
-                url: url.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                root_path: req
-                    .root_path
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("/")
-                    .to_string(),
-            })
+            (
+                "webdav",
+                Credential::Webdav {
+                    url: url.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    root_path: req
+                        .root_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("/")
+                        .to_string(),
+                },
+            )
         }
         "123pan_share" | "123share" => {
             let share_key = req
@@ -2021,11 +2659,14 @@ pub(crate) async fn edit_account(
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "123 分享需要 shareKey".to_string()))?;
-            ("123pan_share", Credential::Pan123Share {
-                share_key: share_key.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-            })
+            (
+                "123pan_share",
+                Credential::Pan123Share {
+                    share_key: share_key.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                },
+            )
         }
         "weiyun" => {
             let cookies = req
@@ -2033,411 +2674,735 @@ pub(crate) async fn edit_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "腾讯微云需要登录 cookie".to_string()))?;
-            ("weiyun", Credential::Weiyun {
-                cookies: cookies.to_string(),
-                root_folder_id: String::new(),
-            })
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "腾讯微云需要登录 cookie".to_string(),
+                ))?;
+            (
+                "weiyun",
+                Credential::Weiyun {
+                    cookies: cookies.to_string(),
+                    root_folder_id: String::new(),
+                },
+            )
         }
         "onedrive" => {
             let rt = refresh.ok_or((
                 StatusCode::BAD_REQUEST,
                 "OneDrive 需要 refresh_token".to_string(),
             ))?;
-            ("onedrive", Credential::Onedrive {
-                region: req
-                    .region
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("global")
-                    .to_string(),
-                is_sharepoint: req.is_sharepoint,
-                site_id: req.site_id.clone().unwrap_or_default(),
-                root_path: req
-                    .root_path
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("/")
-                    .to_string(),
-                refresh_token: rt,
-                access_token: String::new(),
-            })
+            (
+                "onedrive",
+                Credential::Onedrive {
+                    region: req
+                        .region
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("global")
+                        .to_string(),
+                    is_sharepoint: req.is_sharepoint,
+                    site_id: req.site_id.clone().unwrap_or_default(),
+                    root_path: req
+                        .root_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("/")
+                        .to_string(),
+                    refresh_token: rt,
+                    access_token: String::new(),
+                },
+            )
         }
         "google_drive" | "google" | "googledrive" => {
             let rt = refresh.ok_or((
                 StatusCode::BAD_REQUEST,
                 "Google Drive 需要 refresh_token".to_string(),
             ))?;
-            ("google_drive", Credential::GoogleDrive {
-                refresh_token: rt,
-                access_token: String::new(),
-                root_folder_id: req.root_folder_id.clone().unwrap_or_default(),
-            })
+            (
+                "google_drive",
+                Credential::GoogleDrive {
+                    refresh_token: rt,
+                    access_token: String::new(),
+                    root_folder_id: req.root_folder_id.clone().unwrap_or_default(),
+                },
+            )
         }
 
         "s3" => {
-            let bucket = req.bucket.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let bucket = req
+                .bucket
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 bucket".to_string()))?;
-            let endpoint = req.endpoint.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let endpoint = req
+                .endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 endpoint".to_string()))?;
-            let access_key_id = req.access_key_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let access_key_id = req
+                .access_key_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "S3 需要 access_key_id".to_string()))?;
-            let secret_access_key = req.secret_access_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "S3 需要 secret_access_key".to_string()))?;
-            ("s3", Credential::S3 {
-                bucket: bucket.to_string(),
-                endpoint: endpoint.to_string(),
-                region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                session_token: req.session_token.clone().unwrap_or_default(),
-                custom_host: req.custom_host.clone().unwrap_or_default(),
-                force_path_style: req.force_path_style.unwrap_or(false),
-                sign_url_expire: req.sign_url_expire.unwrap_or(4),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let secret_access_key = req
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "S3 需要 secret_access_key".to_string(),
+                ))?;
+            (
+                "s3",
+                Credential::S3 {
+                    bucket: bucket.to_string(),
+                    endpoint: endpoint.to_string(),
+                    region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
+                    access_key_id: access_key_id.to_string(),
+                    secret_access_key: secret_access_key.to_string(),
+                    session_token: req.session_token.clone().unwrap_or_default(),
+                    custom_host: req.custom_host.clone().unwrap_or_default(),
+                    force_path_style: req.force_path_style.unwrap_or(false),
+                    sign_url_expire: req.sign_url_expire.unwrap_or(4),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "sftp" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SFTP 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SFTP 需要 username".to_string()))?;
-            ("sftp", Credential::Sftp {
-                address: address.to_string(),
-                username: username.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-                private_key: req.private_key.clone().unwrap_or_default(),
-                passphrase: req.passphrase.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-                ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
-            })
+            (
+                "sftp",
+                Credential::Sftp {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                    private_key: req.private_key.clone().unwrap_or_default(),
+                    passphrase: req.passphrase.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                    ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                },
+            )
         }
         "ftp" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "FTP 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "FTP 需要 username".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("ftp", Credential::Ftp {
-                address: address.to_string(),
-                username: username.to_string(),
-                password,
-                encoding: req.encoding.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-                cwd_list: req.cwd_list.unwrap_or(false),
-            })
+            (
+                "ftp",
+                Credential::Ftp {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password,
+                    encoding: req.encoding.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                    cwd_list: req.cwd_list.unwrap_or(false),
+                },
+            )
         }
         "smb" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 address".to_string()))?;
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 username".to_string()))?;
-            let share_name = req.share_name.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let share_name = req
+                .share_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "SMB 需要 share_name".to_string()))?;
-            ("smb", Credential::Smb {
-                address: address.to_string(),
-                username: username.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-                share_name: share_name.to_string(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-            })
+            (
+                "smb",
+                Credential::Smb {
+                    address: address.to_string(),
+                    username: username.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                    share_name: share_name.to_string(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                },
+            )
         }
         "alist_v3" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "AList V3 需要 url".to_string()))?;
-            ("alist_v3", Credential::AlistV3 {
-                url: url.to_string(),
-                meta_password: req.meta_password.clone().unwrap_or_default(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-            })
+            (
+                "alist_v3",
+                Credential::AlistV3 {
+                    url: url.to_string(),
+                    meta_password: req.meta_password.clone().unwrap_or_default(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                },
+            )
         }
         "github_releases" => {
-            let repo_structure = req.repo_structure.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "GitHub Releases 需要 repo_structure".to_string()))?;
-            ("github_releases", Credential::GithubReleases {
-                repo_structure: repo_structure.to_string(),
-                token: req.token.clone().unwrap_or_default(),
-                show_all_version: req.show_all_version.unwrap_or(false),
-                show_source_code: req.show_source_code.unwrap_or(false),
-                gh_proxy: req.gh_proxy.clone().unwrap_or_default(),
-                per_page: req.per_page.unwrap_or(30),
-                max_page: req.max_page.unwrap_or(0),
-            })
+            let repo_structure = req
+                .repo_structure
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "GitHub Releases 需要 repo_structure".to_string(),
+                ))?;
+            (
+                "github_releases",
+                Credential::GithubReleases {
+                    repo_structure: repo_structure.to_string(),
+                    token: req.token.clone().unwrap_or_default(),
+                    show_all_version: req.show_all_version.unwrap_or(false),
+                    show_source_code: req.show_source_code.unwrap_or(false),
+                    gh_proxy: req.gh_proxy.clone().unwrap_or_default(),
+                    per_page: req.per_page.unwrap_or(30),
+                    max_page: req.max_page.unwrap_or(0),
+                },
+            )
         }
         "pikpak" => {
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "PikPak 需要 username".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("pikpak", Credential::PikPak {
-                username: username.to_string(),
-                password,
-                refresh_token: req.refresh_token.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                device_id: req.device_id.clone().unwrap_or_default(),
-            })
+            (
+                "pikpak",
+                Credential::PikPak {
+                    username: username.to_string(),
+                    password,
+                    refresh_token: req.refresh_token.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    device_id: req.device_id.clone().unwrap_or_default(),
+                },
+            )
         }
         "onedrive_share" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OneDrive 分享需要 url".to_string()))?;
-            ("onedrive_share", Credential::OnedriveShare {
-                url: url.to_string(),
-                password: req.password.clone().unwrap_or_default(),
-            })
+            (
+                "onedrive_share",
+                Credential::OnedriveShare {
+                    url: url.to_string(),
+                    password: req.password.clone().unwrap_or_default(),
+                },
+            )
         }
         "dropbox" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Dropbox 需要 refresh_token".to_string()))?;
-            ("dropbox", Credential::Dropbox {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Dropbox 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "dropbox",
+                Credential::Dropbox {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                },
+            )
         }
         "google_photo" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Google Photos 需要 refresh_token".to_string()))?;
-            ("google_photo", Credential::GooglePhoto {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Google Photos 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "google_photo",
+                Credential::GooglePhoto {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                },
+            )
         }
         "pan115_open" | "115_open" => {
             let access_token = req.access_token.clone().unwrap_or_default();
             let refresh_token = req.refresh_token.clone().unwrap_or_default();
             if access_token.is_empty() && refresh_token.is_empty() {
-                return Err((StatusCode::BAD_REQUEST, "115 Open 需要 access_token 或 refresh_token".into()));
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "115 Open 需要 access_token 或 refresh_token".into(),
+                ));
             }
-            ("pan115_open", Credential::Pan115Open { access_token, refresh_token })
+            (
+                "pan115_open",
+                Credential::Pan115Open {
+                    access_token,
+                    refresh_token,
+                },
+            )
         }
         "pan115_share" | "115_share" => {
-            let share_code = req.share_code.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "115 分享需要 share_code".to_string()))?;
-            ("pan115_share", Credential::Pan115Share {
-                cookie: req.cookie.clone().unwrap_or_default(),
-                share_code: share_code.to_string(),
-                receive_code: req.receive_code.clone().unwrap_or_default(),
-            })
+            let share_code = req
+                .share_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "115 分享需要 share_code".to_string(),
+                ))?;
+            (
+                "pan115_share",
+                Credential::Pan115Share {
+                    cookie: req.cookie.clone().unwrap_or_default(),
+                    share_code: share_code.to_string(),
+                    receive_code: req.receive_code.clone().unwrap_or_default(),
+                },
+            )
         }
-        "pan123_open" | "123_open" => {
-            ("pan123_open", Credential::Pan123Open {
+        "pan123_open" | "123_open" => (
+            "pan123_open",
+            Credential::Pan123Open {
                 client_id: req.client_id.clone().unwrap_or_default(),
                 client_secret: req.client_secret.clone().unwrap_or_default(),
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 use_online_api: req.use_online_api.unwrap_or(true),
                 api_address: req.api_address.clone().unwrap_or_default(),
-            })
-        }
+            },
+        ),
         "pan123_link" | "123_link" => {
-            let origin_urls = req.origin_urls.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "123PanLink 需要 origin_urls".to_string()))?;
-            ("pan123_link", Credential::Pan123Link {
-                origin_urls: origin_urls.to_string(),
-                private_key: req.private_key.clone().unwrap_or_default(),
-                uid: req.uid.unwrap_or(0),
-                valid_duration: req.valid_duration.unwrap_or(30),
-            })
+            let origin_urls = req
+                .origin_urls
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "123PanLink 需要 origin_urls".to_string(),
+                ))?;
+            (
+                "pan123_link",
+                Credential::Pan123Link {
+                    origin_urls: origin_urls.to_string(),
+                    private_key: req.private_key.clone().unwrap_or_default(),
+                    uid: req.uid.unwrap_or(0),
+                    valid_duration: req.valid_duration.unwrap_or(30),
+                },
+            )
         }
         "aliyundrive" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "阿里云盘(旧)需要 refresh_token".to_string()))?;
-            ("aliyundrive", Credential::Aliyundrive {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "阿里云盘(旧)需要 refresh_token".to_string(),
+                ))?;
+            (
+                "aliyundrive",
+                Credential::Aliyundrive {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                },
+            )
         }
         "aliyundrive_share" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "阿里分享需要 refresh_token".to_string()))?;
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "阿里分享需要 refresh_token".to_string(),
+                ))?;
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "阿里分享需要 share_id".to_string()))?;
-            ("aliyundrive_share", Credential::AliyundriveShare {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-            })
+            (
+                "aliyundrive_share",
+                Credential::AliyundriveShare {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                },
+            )
         }
         "quark_open" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 refresh_token".to_string()))?;
-            let app_id = req.app_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "夸克 Open 需要 refresh_token".to_string(),
+                ))?;
+            let app_id = req
+                .app_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 app_id".to_string()))?;
-            let sign_key = req.sign_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "夸克 Open 需要 sign_key".to_string()))?;
-            ("quark_open", Credential::QuarkOpen {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                app_id: app_id.to_string(),
-                sign_key: sign_key.to_string(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                api_address: req.api_address.clone().unwrap_or_default(),
-            })
+            let sign_key = req
+                .sign_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "夸克 Open 需要 sign_key".to_string(),
+                ))?;
+            (
+                "quark_open",
+                Credential::QuarkOpen {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    app_id: app_id.to_string(),
+                    sign_key: sign_key.to_string(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    api_address: req.api_address.clone().unwrap_or_default(),
+                },
+            )
         }
-        "quark_tv" => {
-            ("quark_tv", Credential::QuarkTv {
+        "quark_tv" => (
+            "quark_tv",
+            Credential::QuarkTv {
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 device_id: req.device_id.clone().unwrap_or_default(),
                 link_method: req.link_method.clone().unwrap_or_else(|| "download".into()),
-            })
-        }
-        "uc_tv" => {
-            ("uc_tv", Credential::UcTv {
+            },
+        ),
+        "uc_tv" => (
+            "uc_tv",
+            Credential::UcTv {
                 refresh_token: req.refresh_token.clone().unwrap_or_default(),
                 access_token: req.access_token.clone().unwrap_or_default(),
                 device_id: req.device_id.clone().unwrap_or_default(),
                 link_method: req.link_method.clone().unwrap_or_else(|| "download".into()),
-            })
-        }
+            },
+        ),
 
         "pikpak_share" => {
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "PikPak 分享需要 share_id".to_string()))?;
-            ("pikpak_share", Credential::PikPakShare {
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-                platform: req.platform.clone().unwrap_or_else(|| "web".into()),
-                device_id: req.device_id.clone().unwrap_or_default(),
-                use_transcoding_address: req.use_transcoding_address.unwrap_or(false),
-            })
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "PikPak 分享需要 share_id".to_string(),
+                ))?;
+            (
+                "pikpak_share",
+                Credential::PikPakShare {
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                    platform: req.platform.clone().unwrap_or_else(|| "web".into()),
+                    device_id: req.device_id.clone().unwrap_or_default(),
+                    use_transcoding_address: req.use_transcoding_address.unwrap_or(false),
+                },
+            )
         }
         "onedrive_app" => {
-            let client_id = req.client_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要 client_id".to_string()))?;
-            let client_secret = req.client_secret.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要 client_secret".to_string()))?;
-            let email = req.email.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OneDrive APP 需要用户邮箱 email".to_string()))?;
-            ("onedrive_app", Credential::OnedriveApp {
-                region: req.region.clone().unwrap_or_else(|| "global".into()),
-                client_id: client_id.to_string(),
-                client_secret: client_secret.to_string(),
-                tenant_id: req.tenant_id.clone().unwrap_or_default(),
-                email: email.to_string(),
-                custom_host: req.custom_host.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let client_id = req
+                .client_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要 client_id".to_string(),
+                ))?;
+            let client_secret = req
+                .client_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要 client_secret".to_string(),
+                ))?;
+            let email = req
+                .email
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OneDrive APP 需要用户邮箱 email".to_string(),
+                ))?;
+            (
+                "onedrive_app",
+                Credential::OnedriveApp {
+                    region: req.region.clone().unwrap_or_else(|| "global".into()),
+                    client_id: client_id.to_string(),
+                    client_secret: client_secret.to_string(),
+                    tenant_id: req.tenant_id.clone().unwrap_or_default(),
+                    email: email.to_string(),
+                    custom_host: req.custom_host.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "openlist" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OpenList 需要 url".to_string()))?;
-            ("openlist", Credential::Openlist {
-                url: url.to_string(),
-                meta_password: req.meta_password.clone().unwrap_or_default(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-            })
+            (
+                "openlist",
+                Credential::Openlist {
+                    url: url.to_string(),
+                    meta_password: req.meta_password.clone().unwrap_or_default(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                },
+            )
         }
         "openlist_share" => {
-            let url = req.url.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let url = req
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "OpenList 分享需要 url".to_string()))?;
-            let share_id = req.share_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "OpenList 分享需要 share_id".to_string()))?;
-            ("openlist_share", Credential::OpenlistShare {
-                url: url.to_string(),
-                share_id: share_id.to_string(),
-                share_pwd: req.share_pwd.clone().unwrap_or_default(),
-            })
+            let share_id = req
+                .share_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "OpenList 分享需要 share_id".to_string(),
+                ))?;
+            (
+                "openlist_share",
+                Credential::OpenlistShare {
+                    url: url.to_string(),
+                    share_id: share_id.to_string(),
+                    share_pwd: req.share_pwd.clone().unwrap_or_default(),
+                },
+            )
         }
-        "virtual" => {
-            ("virtual", Credential::Virtual {
+        "virtual" => (
+            "virtual",
+            Credential::Virtual {
                 num_file: req.num_file.unwrap_or(5),
                 num_folder: req.num_folder.unwrap_or(0),
-            })
-        }
+            },
+        ),
         "bunny" => {
-            let bucket = req.bucket.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let bucket = req
+                .bucket
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 bucket".to_string()))?;
-            let access_key_id = req.access_key_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 access_key_id".to_string()))?;
-            let secret_access_key = req.secret_access_key.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Bunny 需要 secret_access_key".to_string()))?;
-            ("bunny", Credential::Bunny {
-                bucket: bucket.to_string(),
-                endpoint: req.endpoint.clone().unwrap_or_default(),
-                region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let access_key_id = req
+                .access_key_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Bunny 需要 access_key_id".to_string(),
+                ))?;
+            let secret_access_key = req
+                .secret_access_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Bunny 需要 secret_access_key".to_string(),
+                ))?;
+            (
+                "bunny",
+                Credential::Bunny {
+                    bucket: bucket.to_string(),
+                    endpoint: req.endpoint.clone().unwrap_or_default(),
+                    region: req.region.clone().unwrap_or_else(|| "us-east-1".into()),
+                    access_key_id: access_key_id.to_string(),
+                    secret_access_key: secret_access_key.to_string(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "yandex_disk" => {
-            let refresh_token = req.refresh_token.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Yandex.Disk 需要 refresh_token".to_string()))?;
-            ("yandex_disk", Credential::YandexDisk {
-                refresh_token: refresh_token.to_string(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                use_online_api: req.use_online_api.unwrap_or(true),
-                api_address: req.api_address.clone().unwrap_or_default(),
-                client_id: req.client_id.clone().unwrap_or_default(),
-                client_secret: req.client_secret.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Yandex.Disk 需要 refresh_token".to_string(),
+                ))?;
+            (
+                "yandex_disk",
+                Credential::YandexDisk {
+                    refresh_token: refresh_token.to_string(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    use_online_api: req.use_online_api.unwrap_or(true),
+                    api_address: req.api_address.clone().unwrap_or_default(),
+                    client_id: req.client_id.clone().unwrap_or_default(),
+                    client_secret: req.client_secret.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "seafile" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "Seafile 需要 address".to_string()))?;
-            ("seafile", Credential::Seafile {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                token: req.token.clone().unwrap_or_default(),
-                repo_id: req.repo_id.clone().unwrap_or_default(),
-                repo_pwd: req.repo_pwd.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            (
+                "seafile",
+                Credential::Seafile {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    token: req.token.clone().unwrap_or_default(),
+                    repo_id: req.repo_id.clone().unwrap_or_default(),
+                    repo_pwd: req.repo_pwd.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "kodbox" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "KodBox 需要 address".to_string()))?;
-            ("kodbox", Credential::Kodbox {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_default(),
-            })
+            (
+                "kodbox",
+                Credential::Kodbox {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_default(),
+                },
+            )
         }
         "cloudreve_v4" => {
-            let address = req.address.as_deref().map(str::trim).filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "Cloudreve V4 需要 address".to_string()))?;
-            ("cloudreve_v4", Credential::CloudreveV4 {
-                address: address.to_string(),
-                username: req.username.clone().unwrap_or_default(),
-                password: req.password.clone().unwrap_or_default(),
-                access_token: req.access_token.clone().unwrap_or_default(),
-                refresh_token: req.refresh_token.clone().unwrap_or_default(),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let address = req
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "Cloudreve V4 需要 address".to_string(),
+                ))?;
+            (
+                "cloudreve_v4",
+                Credential::CloudreveV4 {
+                    address: address.to_string(),
+                    username: req.username.clone().unwrap_or_default(),
+                    password: req.password.clone().unwrap_or_default(),
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    refresh_token: req.refresh_token.clone().unwrap_or_default(),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "terabox" => {
-            let cookie = cookie.ok_or((StatusCode::BAD_REQUEST, "Terabox 需要 cookie".to_string()))?;
-            ("terabox", Credential::Terabox {
-                cookie,
-                download_api: req.download_api.clone().unwrap_or_else(|| "official".into()),
-                root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
-            })
+            let cookie =
+                cookie.ok_or((StatusCode::BAD_REQUEST, "Terabox 需要 cookie".to_string()))?;
+            (
+                "terabox",
+                Credential::Terabox {
+                    cookie,
+                    download_api: req
+                        .download_api
+                        .clone()
+                        .unwrap_or_else(|| "official".into()),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
         }
         "ilanzou" => {
-            let username = req.username.as_deref().map(str::trim).filter(|s| !s.is_empty())
+            let username = req
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
                 .ok_or((StatusCode::BAD_REQUEST, "蓝奏云优创需要账号".to_string()))?;
             let password = req.password.clone().unwrap_or_default();
-            ("ilanzou", Credential::Ilanzou {
-                site: req.site.clone().unwrap_or_else(|| "ilanzou".into()),
-                username: username.to_string(),
-                password,
-                root_folder_id: req.root_folder_id.clone().unwrap_or_else(|| "0".into()),
-            })
+            (
+                "ilanzou",
+                Credential::Ilanzou {
+                    site: req.site.clone().unwrap_or_else(|| "ilanzou".into()),
+                    username: username.to_string(),
+                    password,
+                    root_folder_id: req.root_folder_id.clone().unwrap_or_else(|| "0".into()),
+                },
+            )
         }
         other => {
             return Err((
@@ -2468,17 +3433,25 @@ pub(crate) async fn edit_account(
             acc.cred = cred;
             acc.server_proxy = req.server_proxy;
         }
-        st.store
-            .save(&data)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存配置失败: {e}")))?;
+        st.store.save(&data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("保存配置失败: {e}"),
+            )
+        })?;
     }
 
     // 替换驱动缓存
-    st.drivers.lock().unwrap().insert(id.clone(), Arc::new(new_driver));
+    st.drivers
+        .lock()
+        .unwrap()
+        .insert(id.clone(), Arc::new(new_driver));
     // 凭据已变更，清空该账号全部目录缓存，避免展示旧数据
     st.list_cache.invalidate_account(&id);
 
-    Ok(Json(json!({ "id": id, "name": new_name, "driver": driver_kind })))
+    Ok(Json(
+        json!({ "id": id, "name": new_name, "driver": driver_kind }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -2500,9 +3473,12 @@ pub(crate) async fn patch_account_enabled(
             .find(|a| a.id == id)
             .ok_or((StatusCode::NOT_FOUND, "账号不存在".to_string()))?;
         acc.enabled = req.enabled;
-        st.store
-            .save(&data)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存配置失败: {e}")))?;
+        st.store.save(&data).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("保存配置失败: {e}"),
+            )
+        })?;
     }
     Ok(Json(json!({ "id": id, "enabled": req.enabled })))
 }
