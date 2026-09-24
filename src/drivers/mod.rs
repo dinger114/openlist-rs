@@ -9,6 +9,7 @@ pub mod ftp;
 pub mod github_releases;
 pub mod google_drive;
 pub mod google_photo;
+pub mod halalcloud_open;
 pub mod ilanzou;
 pub mod kodbox;
 pub mod lanzou;
@@ -163,6 +164,7 @@ pub enum Driver {
     CloudreveV4(cloudreve_v4::CloudreveV4),
     Terabox(terabox::Terabox),
     Ilanzou(ilanzou::Ilanzou),
+    HalalcloudOpen(halalcloud_open::HalalcloudOpen),
 }
 
 impl Driver {
@@ -725,6 +727,25 @@ impl Driver {
                 root_folder_id.clone(),
                 store.clone(),
             )),
+            Credential::HalalcloudOpen {
+                client_id,
+                client_secret,
+                access_token,
+                refresh_token,
+                host,
+                timeout,
+                root_path,
+            } => Driver::HalalcloudOpen(halalcloud_open::HalalcloudOpen::new(
+                id,
+                client_id.clone(),
+                client_secret.clone(),
+                access_token.clone(),
+                refresh_token.clone(),
+                host.clone(),
+                *timeout,
+                root_path.clone(),
+                store.clone(),
+            )),
         };
         // 统一验证凭据（对齐各驱动 Init()）
         match &d {
@@ -774,6 +795,7 @@ impl Driver {
             Driver::CloudreveV4(x) => x.validate().await?,
             Driver::Terabox(x) => x.validate().await?,
             Driver::Ilanzou(x) => x.validate().await?,
+            Driver::HalalcloudOpen(x) => x.validate().await?,
         }
         Ok(d)
     }
@@ -826,6 +848,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.list(parent_fid).await,
             Driver::Terabox(d) => d.list(parent_fid).await,
             Driver::Ilanzou(d) => d.list(parent_fid).await,
+            Driver::HalalcloudOpen(d) => d.list(parent_fid).await,
         }
     }
 
@@ -877,6 +900,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.download(e).await,
             Driver::Terabox(d) => d.download(e).await,
             Driver::Ilanzou(d) => d.download(e).await,
+            Driver::HalalcloudOpen(d) => d.download(e).await,
         }
     }
 
@@ -929,6 +953,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.mkdir(parent_fid, name).await,
             Driver::Terabox(d) => d.mkdir(parent_fid, name).await,
             Driver::Ilanzou(d) => d.mkdir(parent_fid, name).await,
+            Driver::HalalcloudOpen(d) => d.mkdir(parent_fid, name).await,
         }
     }
 
@@ -981,6 +1006,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Terabox(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Ilanzou(d) => d.rename(parent_fid, e, new_name).await,
+            Driver::HalalcloudOpen(d) => d.rename(parent_fid, e, new_name).await,
         }
     }
 
@@ -1038,6 +1064,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Terabox(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Ilanzou(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
+            Driver::HalalcloudOpen(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
         }
     }
 
@@ -1090,6 +1117,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Terabox(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Ilanzou(d) => d.copy(parent_fid, e, dst_dir_fid).await,
+            Driver::HalalcloudOpen(d) => d.copy(parent_fid, e, dst_dir_fid).await,
         }
     }
 
@@ -1142,6 +1170,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.remove(parent_fid, e).await,
             Driver::Terabox(d) => d.remove(parent_fid, e).await,
             Driver::Ilanzou(d) => d.remove(parent_fid, e).await,
+            Driver::HalalcloudOpen(d) => d.remove(parent_fid, e).await,
         }
     }
 
@@ -1195,6 +1224,7 @@ impl Driver {
             Driver::CloudreveV4(d) => d.put(dst_dir_fid, input).await,
             Driver::Terabox(d) => d.put(dst_dir_fid, input).await,
             Driver::Ilanzou(d) => d.put(dst_dir_fid, input).await,
+            Driver::HalalcloudOpen(d) => d.put(dst_dir_fid, input).await,
         }
     }
 }

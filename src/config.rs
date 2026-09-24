@@ -490,6 +490,25 @@ pub enum Credential {
         #[serde(default = "default_ilanzou_root")]
         root_folder_id: String,
     },
+    /// 哈拉云盘 OpenAPI（对齐 Go 版 drivers/halalcloud_open，HTTP 版）
+    ///
+    /// gRPC 版 halalcloud（OnlyProxy + NoLinkURL，下载走 slice 拼流）未移植。
+    HalalcloudOpen {
+        client_id: String,
+        client_secret: String,
+        /// 在线刷新得到的 access_token（会过期，驱动刷新后自动写回此处）
+        #[serde(default)]
+        access_token: String,
+        /// 刷新令牌（personal API 模式下可空，但空则 access_token 失效后必须手动更新）
+        #[serde(default)]
+        refresh_token: String,
+        #[serde(default = "default_halalcloud_host")]
+        host: String,
+        #[serde(default = "default_halalcloud_timeout")]
+        timeout: u64,
+        #[serde(default = "default_s3_root")]
+        root_path: String,
+    },
 }
 
 fn default_alipan_type() -> String {
@@ -563,6 +582,12 @@ fn default_ilanzou_site() -> String {
 }
 fn default_ilanzou_root() -> String {
     "0".to_string()
+}
+fn default_halalcloud_host() -> String {
+    "openapi.2dland.cn".to_string()
+}
+fn default_halalcloud_timeout() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

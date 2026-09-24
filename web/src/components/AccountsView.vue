@@ -750,6 +750,23 @@
             <p class="hint-text">根目录含 all / albums / share_albums。下载走代理。</p>
           </template>
 
+          <template v-else-if="form.driver === 'halalcloud_open'">
+            <label class="field"><span>Client ID</span>
+              <input class="input" v-model="form.client_id" placeholder="哈拉云开发者 client_id" /></label>
+            <label class="field"><span>Client Secret</span>
+              <input class="input" v-model="form.client_secret" type="password" /></label>
+            <label class="field"><span>Refresh Token</span>
+              <textarea class="input" v-model="form.refresh_token" placeholder="推荐：过期自动刷新并回写"></textarea></label>
+            <label class="field"><span>Access Token（可选，刷新后自动写回）</span>
+              <textarea class="input" v-model="form.access_token"></textarea></label>
+            <label class="field"><span>API Host（可选）</span>
+              <input class="input" v-model="form.host" placeholder="openapi.2dland.cn" /></label>
+            <label class="field"><span>超时（秒，可选）</span>
+              <input class="input" type="number" v-model.number="form.timeout" placeholder="60" /></label>
+            <label class="field"><span>根路径（可选）</span>
+              <input class="input" v-model="form.root_path" placeholder="/" /></label>
+          </template>
+
 
 
 <div class="modal-actions">
@@ -833,6 +850,7 @@ const DRIVERS = [
   { value: 'yandex_disk', label: 'Yandex.Disk' },
   { value: 'terabox', label: 'Terabox' },
   { value: 'ilanzou', label: '蓝奏云优创' },
+  { value: 'halalcloud_open', label: '哈拉云' },
   { value: 'bunny', label: 'BunnyCDN' },
   { value: 'virtual', label: '虚拟存储' }
 ]
@@ -871,6 +889,8 @@ const form = reactive({
   secret_access_key: '',
   session_token: '',
   custom_host: '',
+  host: 'openapi.2dland.cn',
+  timeout: 60,
   force_path_style: false,
   sign_url_expire: 4,
   private_key: '',
@@ -934,6 +954,8 @@ function resetForm() {
   form.is_sharepoint = false
   form.site_id = ''
   form.root_folder_id = ''
+  form.host = 'openapi.2dland.cn'
+  form.timeout = 60
   form.server_proxy = false
   form.num_file = 5
   form.num_folder = 0
@@ -985,6 +1007,8 @@ async function startEdit(account) {
   form.is_sharepoint = false
   form.site_id = ''
   form.root_folder_id = ''
+  form.host = 'openapi.2dland.cn'
+  form.timeout = 60
   form.server_proxy = account.server_proxy ?? false
 
   // 再拉取凭据明细，回填 cookie / 账号密码 / refresh_token
@@ -1017,6 +1041,8 @@ async function startEdit(account) {
     form.secret_access_key = secret.secret_access_key ?? ''
     form.session_token = secret.session_token ?? ''
     form.custom_host = secret.custom_host ?? ''
+    form.host = secret.host ?? 'openapi.2dland.cn'
+    form.timeout = secret.timeout ?? 60
     form.force_path_style = secret.force_path_style ?? false
     form.sign_url_expire = secret.sign_url_expire ?? 4
     form.private_key = secret.private_key ?? ''
@@ -1119,7 +1145,8 @@ const DRIVER_COLORS = {
   kodbox: '#3f7df6',
   cloudreve_v4: '#6f5bd5',
   terabox: '#06a7ff',
-  ilanzou: '#5cb85c'
+  ilanzou: '#5cb85c',
+  halalcloud_open: '#2f6fed'
 }
 const badgeName = (d) => props.driverLabels[d] || d
 const badgeStyle = (d) => {

@@ -71,6 +71,7 @@ pub(crate) fn driver_display_name(kind: &str) -> &'static str {
         "cloudreve_v4" => "Cloudreve V4",
         "terabox" => "Terabox",
         "ilanzou" => "蓝奏云优创",
+        "halalcloud_open" => "哈拉云",
         _ => "网盘",
     }
 }
@@ -128,6 +129,7 @@ pub(crate) fn default_root_fid(driver_kind: &str, cred: &Credential) -> String {
         "aliyundrive_open" => "root".into(),
         "baidu_netdisk" => "/".into(),
         "lanzou" => "-1".into(),
+        "halalcloud_open" => "/".into(),
         _ => "0".into(),
     }
 }
@@ -198,6 +200,7 @@ pub(crate) async fn list_accounts(State(st): State<AppState>) -> Json<Value> {
                 Credential::CloudreveV4 { .. } => "cloudreve_v4".into(),
                 Credential::Terabox { .. } => "terabox".into(),
                 Credential::Ilanzou { .. } => "ilanzou".into(),
+                Credential::HalalcloudOpen { .. } => "halalcloud_open".into(),
             },
             server_proxy: a.server_proxy,
             enabled: a.enabled,
@@ -360,6 +363,12 @@ pub(crate) struct AddAccountReq {
     /// 服务器代理开关（默认 false = 直链 302）
     #[serde(default)]
     server_proxy: bool,
+
+    // halalcloud_open：API host 与超时（秒）
+    #[serde(default)]
+    host: Option<String>,
+    #[serde(default)]
+    timeout: Option<u64>,
 }
 
 /// POST /api/accounts —— 构建驱动验证凭据后保存
@@ -1327,6 +1336,55 @@ pub(crate) async fn add_account(
                 },
             )
         }
+        "halalcloud_open" => {
+            let client_id = req
+                .client_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((StatusCode::BAD_REQUEST, "哈拉云需要 client_id".to_string()))?
+                .to_string();
+            let client_secret = req
+                .client_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "哈拉云需要 client_secret".to_string(),
+                ))?
+                .to_string();
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            // personal API 模式下可以只给 access_token；两者都空则任何接口都调不动
+            if refresh_token.is_none()
+                && req.access_token.as_deref().unwrap_or("").trim().is_empty()
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "哈拉云需要 refresh_token（或一个有效的 access_token）".to_string(),
+                ));
+            }
+            (
+                "halalcloud_open",
+                Credential::HalalcloudOpen {
+                    client_id,
+                    client_secret,
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    refresh_token: refresh_token.unwrap_or_default(),
+                    host: req
+                        .host
+                        .clone()
+                        .unwrap_or_else(|| "openapi.2dland.cn".to_string()),
+                    timeout: req.timeout.unwrap_or(60),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
+        }
         other => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -1941,6 +1999,24 @@ pub(crate) async fn get_account_secret(
             out["username"] = json!(username);
             out["password"] = json!(password);
             out["root_folder_id"] = json!(root_folder_id);
+        }
+        Credential::HalalcloudOpen {
+            client_id,
+            client_secret,
+            access_token,
+            refresh_token,
+            host,
+            timeout,
+            root_path,
+        } => {
+            out["driver"] = json!("halalcloud_open");
+            out["client_id"] = json!(client_id);
+            out["client_secret"] = json!(client_secret);
+            out["access_token"] = json!(access_token);
+            out["refresh_token"] = json!(refresh_token);
+            out["host"] = json!(host);
+            out["timeout"] = json!(timeout);
+            out["root_path"] = json!(root_path);
         }
     }
 
@@ -3422,6 +3498,55 @@ pub(crate) async fn edit_account(
                 },
             )
         }
+        "halalcloud_open" => {
+            let client_id = req
+                .client_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((StatusCode::BAD_REQUEST, "哈拉云需要 client_id".to_string()))?
+                .to_string();
+            let client_secret = req
+                .client_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "哈拉云需要 client_secret".to_string(),
+                ))?
+                .to_string();
+            let refresh_token = req
+                .refresh_token
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            // personal API 模式下可以只给 access_token；两者都空则任何接口都调不动
+            if refresh_token.is_none()
+                && req.access_token.as_deref().unwrap_or("").trim().is_empty()
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    "哈拉云需要 refresh_token（或一个有效的 access_token）".to_string(),
+                ));
+            }
+            (
+                "halalcloud_open",
+                Credential::HalalcloudOpen {
+                    client_id,
+                    client_secret,
+                    access_token: req.access_token.clone().unwrap_or_default(),
+                    refresh_token: refresh_token.unwrap_or_default(),
+                    host: req
+                        .host
+                        .clone()
+                        .unwrap_or_else(|| "openapi.2dland.cn".to_string()),
+                    timeout: req.timeout.unwrap_or(60),
+                    root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
+                },
+            )
+        }
         other => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -3541,6 +3666,7 @@ mod tests {
             ("aliyundrive_open", "root"),
             ("baidu_netdisk", "/"),
             ("lanzou", "-1"),
+            ("halalcloud_open", "/"),
         ];
         for (kind, want) in cases {
             assert_eq!(default_root_fid(kind, &c), *want, "driver={kind}");
