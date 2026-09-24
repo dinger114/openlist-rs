@@ -100,6 +100,10 @@ async fn main() {
         .route("/api/fs/put/progress", get(compat::compat_fs_put_progress))
         .route("/d/{*path}", get(compat::compat_down))
         .route("/p/{*path}", get(compat::compat_proxy))
+        // 上传没有体量上限：/api/fs/form 是 multipart 提取器，axum 默认 2MB 上限会让稍大的
+        // 文件直接 400（"Error parsing multipart/form-data request"）；内容由 handler 边收边落盘，
+        // /api/fs/put 本来就是流式，不受上限保护也无需它
+        .layer(axum::extract::DefaultBodyLimit::disable())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_guard,
