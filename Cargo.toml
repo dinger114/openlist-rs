@@ -30,11 +30,9 @@ hex = "0.4"
 hmac = "0.12"
 sha2 = "0.10"
 async-trait = "0.1"
-# SSH/SFTP：russh 0.45 无 ring feature；Host key 类型来自 ssh-key
-russh = "0.45"
-russh-sftp = "2.0"
-russh-keys = "0.45"
-ssh-key = { version = "0.6", default-features = false, features = ["alloc"] }
+# SSH/SFTP：russh 0.63（自带 keys 模块，不再需要 russh-keys / ssh-key 直接依赖）
+russh = "0.63"
+russh-sftp = "3"
 # 持久化：redb 嵌入式 KV 库（单文件），账号数据 AES-256-GCM 加密后落盘
 redb = "2"
 aes-gcm = "0.10"
