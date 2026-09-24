@@ -1,4 +1,4 @@
-//! 哈拉云盘 OpenAPI 驱动（对齐 Go 版 drivers/halalcloud_open）
+//! halalcloud 盘 OpenAPI 驱动（对齐 Go 版 drivers/halalcloud_open）
 //!
 //! 纯 HTTP 版本（不是 gRPC 的 `halalcloud` 驱动）：默认 host `openapi.2dland.cn`，
 //! client_id/client_secret + access_token/refresh_token 鉴权。
@@ -233,7 +233,7 @@ impl HalalcloudOpen {
     ) -> Result<Value, ApiErr> {
         let body_bytes = match body {
             Some(v) => serde_json::to_vec(v)
-                .map_err(|e| ApiErr::new(format!("哈拉云请求体序列化失败: {e}")))?,
+                .map_err(|e| ApiErr::new(format!("halalcloud 请求体序列化失败: {e}")))?,
             None => Vec::new(),
         };
         let token = self.access_token.lock().unwrap().clone();
@@ -263,19 +263,19 @@ impl HalalcloudOpen {
         let resp = req
             .send()
             .await
-            .map_err(|e| ApiErr::new(format!("哈拉云请求失败: {e}")))?;
+            .map_err(|e| ApiErr::new(format!("halalcloud 请求失败: {e}")))?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
         if status == 401 {
             return Err(ApiErr::unauthorized(format!(
-                "哈拉云未授权 (HTTP 401): {}",
+                "halalcloud 未授权 (HTTP 401): {}",
                 api_message(&v, &text)
             )));
         }
         if !(200..300).contains(&status) {
             return Err(ApiErr::new(format!(
-                "哈拉云接口错误 (HTTP {status}): {}",
+                "halalcloud 接口错误 (HTTP {status}): {}",
                 api_message(&v, &text)
             )));
         }
@@ -306,7 +306,9 @@ impl HalalcloudOpen {
     async fn refresh_access_token(&self) -> Result<(), String> {
         let refresh_token = self.refresh_token.lock().unwrap().clone();
         if refresh_token.is_empty() {
-            return Err("哈拉云 access_token 已失效且未配置 refresh_token，请重新填写凭据".into());
+            return Err(
+                "halalcloud access_token 已失效且未配置 refresh_token，请重新填写凭据".into(),
+            );
         }
         let body = json!({
             "refresh_token": refresh_token,
@@ -320,14 +322,14 @@ impl HalalcloudOpen {
                 Some(&body),
             )
             .await
-            .map_err(|e| format!("哈拉云刷新令牌失败: {}", e.message))?;
+            .map_err(|e| format!("halalcloud 刷新令牌失败: {}", e.message))?;
         let access_token = v
             .get("access_token")
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string();
         if access_token.is_empty() {
-            return Err("哈拉云刷新令牌失败: 响应中没有 access_token".into());
+            return Err("halalcloud 刷新令牌失败: 响应中没有 access_token".into());
         }
         // refresh_token 会轮换，返回空则沿用旧的
         let new_refresh = v
@@ -362,7 +364,7 @@ impl HalalcloudOpen {
             .await?;
         let identity = v.get("identity").map(value_to_string).unwrap_or_default();
         if identity.is_empty() {
-            return Err("哈拉云登录校验失败：响应中没有用户 identity".into());
+            return Err("halalcloud 登录校验失败：响应中没有用户 identity".into());
         }
         Ok(())
     }
@@ -417,7 +419,7 @@ impl HalalcloudOpen {
             .map(value_to_string)
             .unwrap_or_default();
         if url.is_empty() {
-            return Err("哈拉云未返回下载直链".into());
+            return Err("halalcloud 未返回下载直链".into());
         }
         Ok(DownloadInfo {
             url,
@@ -504,7 +506,7 @@ impl HalalcloudOpen {
     /// 上传：Go 版走 create_upload_task + 分块 CID(cid v1 raw+sha256) + 收尾 POST，
     /// 需要 base32 编码与 5 次 ×120s 重试，尚未移植
     pub async fn put(&self, _dst_dir_fid: &str, _input: PutInput) -> Result<(), String> {
-        Err("哈拉云上传尚未实现（只读 + 写操作已可用）".into())
+        Err("halalcloud 上传尚未实现（只读 + 写操作已可用）".into())
     }
 }
 

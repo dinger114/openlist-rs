@@ -71,7 +71,7 @@ pub(crate) fn driver_display_name(kind: &str) -> &'static str {
         "cloudreve_v4" => "Cloudreve V4",
         "terabox" => "Terabox",
         "ilanzou" => "蓝奏云优创",
-        "halalcloud_open" => "哈拉云",
+        "halalcloud_open" => "halalcloud",
         _ => "网盘",
     }
 }
@@ -1342,7 +1342,10 @@ pub(crate) async fn add_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "哈拉云需要 client_id".to_string()))?
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "halalcloud 需要 client_id".to_string(),
+                ))?
                 .to_string();
             let client_secret = req
                 .client_secret
@@ -1351,7 +1354,7 @@ pub(crate) async fn add_account(
                 .filter(|s| !s.is_empty())
                 .ok_or((
                     StatusCode::BAD_REQUEST,
-                    "哈拉云需要 client_secret".to_string(),
+                    "halalcloud 需要 client_secret".to_string(),
                 ))?
                 .to_string();
             // meta.go 只要求 client_id / client_secret；个人 API 方式不需要令牌
@@ -2131,6 +2134,9 @@ pub(crate) struct FileQuery {
     /// inline=在线播放（Content-Disposition: inline），默认附件下载
     #[serde(default)]
     pub(crate) disp: Option<String>,
+    /// proxy=1 强制走本服务中转（预览用：直链可能带 nosniff/octet-stream，浏览器播不了）
+    #[serde(default)]
+    pub(crate) proxy: Option<bool>,
 }
 
 impl FileQuery {
@@ -2179,8 +2185,8 @@ pub(crate) async fn get_download(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    // 需要代理的条件：账号开关 OR 驱动要求（如 115 UA 绑定直链）
-    if account_server_proxy || info.proxy {
+    // 需要代理的条件：账号开关 OR 驱动要求（如 115 UA 绑定直链）OR 客户端显式要求（预览）
+    if account_server_proxy || info.proxy || q.proxy.unwrap_or(false) {
         // 将 url 重写为本服务的 /api/stream 端点，让客户端通过本服务中转
         let host = headers
             .get(header::HOST)
@@ -2307,7 +2313,6 @@ pub(crate) async fn proxy_stream(
     for h in [
         header::CONTENT_LENGTH,
         header::CONTENT_RANGE,
-        header::CONTENT_TYPE,
         header::ACCEPT_RANGES,
         header::ETAG,
         header::LAST_MODIFIED,
@@ -2316,6 +2321,21 @@ pub(crate) async fn proxy_stream(
             resp_builder = resp_builder.header(&h, v);
         }
     }
+    // Content-Type：上游常给 application/octet-stream（部分 CDN 还带
+    // X-Content-Type-Options: nosniff），浏览器会因此拒绝当媒体播放/预览，
+    // 这里按扩展名纠正（与本地存储同一套规则）
+    let upstream_ctype = upstream
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let ctype =
+        if upstream_ctype.is_empty() || upstream_ctype.starts_with("application/octet-stream") {
+            content_type_by_ext(&e.name).to_string()
+        } else {
+            upstream_ctype.to_string()
+        };
+    resp_builder = resp_builder.header(header::CONTENT_TYPE, ctype);
     // Content-Disposition：inline 在线播放 / attachment 附件下载
     let fname = if e.name.is_empty() {
         "download"
@@ -3497,7 +3517,10 @@ pub(crate) async fn edit_account(
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
-                .ok_or((StatusCode::BAD_REQUEST, "哈拉云需要 client_id".to_string()))?
+                .ok_or((
+                    StatusCode::BAD_REQUEST,
+                    "halalcloud 需要 client_id".to_string(),
+                ))?
                 .to_string();
             let client_secret = req
                 .client_secret
@@ -3506,7 +3529,7 @@ pub(crate) async fn edit_account(
                 .filter(|s| !s.is_empty())
                 .ok_or((
                     StatusCode::BAD_REQUEST,
-                    "哈拉云需要 client_secret".to_string(),
+                    "halalcloud 需要 client_secret".to_string(),
                 ))?
                 .to_string();
             // meta.go 只要求 client_id / client_secret；个人 API 方式不需要令牌

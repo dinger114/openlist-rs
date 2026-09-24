@@ -242,7 +242,7 @@ const DRIVER_LABELS = {
   cloudreve_v4: 'Cloudreve',
   terabox: 'Terabox',
   ilanzou: '蓝奏优',
-  halalcloud_open: '哈拉云'
+  halalcloud_open: 'halalcloud'
 }
 
 // 鉴权
@@ -927,8 +927,9 @@ function fileQuery(e, disp) {
 
 // 取真实预览/下载地址：由后端根据账号 server_proxy 开关决定
 // 返回网盘直链（开关关闭）还是本服务 /api/stream 中转地址（开关开启）
-async function resolveUrl(e) {
-  const b = await api(`/api/download?${fileQuery(e)}`)
+// forceProxy：预览时强制中转（直链上游常是 octet-stream + nosniff，浏览器播不了）
+async function resolveUrl(e, forceProxy = false) {
+  const b = await api(`/api/download?${fileQuery(e)}${forceProxy ? '&proxy=true' : ''}`)
   return b.url
 }
 
@@ -948,7 +949,7 @@ function download(e) {
 
 async function handlePreview(e) {
   try {
-    const url = await resolveUrl(e)
+    const url = await resolveUrl(e, true)
     preview.value = { ...e, _url: url, _kind: kindOf(e.name, e.is_dir) }
   } catch (ex) {
     err.value = ex.message || '获取预览地址失败'

@@ -752,7 +752,7 @@
 
           <template v-else-if="form.driver === 'halalcloud_open'">
             <label class="field"><span>Client ID</span>
-              <input class="input" v-model="form.client_id" placeholder="哈拉云开发者 client_id" /></label>
+              <input class="input" v-model="form.client_id" placeholder="halalcloud 开发者 client_id" /></label>
             <label class="field"><span>Client Secret</span>
               <input class="input" v-model="form.client_secret" type="password" /></label>
             <label class="field"><span>Refresh Token（可选，个人 API 方式不需要）</span>
@@ -850,7 +850,7 @@ const DRIVERS = [
   { value: 'yandex_disk', label: 'Yandex.Disk' },
   { value: 'terabox', label: 'Terabox' },
   { value: 'ilanzou', label: '蓝奏云优创' },
-  { value: 'halalcloud_open', label: '哈拉云' },
+  { value: 'halalcloud_open', label: 'halalcloud' },
   { value: 'bunny', label: 'BunnyCDN' },
   { value: 'virtual', label: '虚拟存储' }
 ]

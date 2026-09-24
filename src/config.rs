@@ -490,7 +490,7 @@ pub enum Credential {
         #[serde(default = "default_ilanzou_root")]
         root_folder_id: String,
     },
-    /// 哈拉云盘 OpenAPI（对齐 Go 版 drivers/halalcloud_open，HTTP 版）
+    /// halalcloud OpenAPI（对齐 Go 版 drivers/halalcloud_open，HTTP 版）
     ///
     /// gRPC 版 halalcloud（OnlyProxy + NoLinkURL，下载走 slice 拼流）未移植。
     HalalcloudOpen {
