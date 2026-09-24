@@ -136,16 +136,17 @@ openlist-rs/
 │       ├── pan115_share.rs     115 分享（只读）
 │       └── ...                 百度、天翼、移动、迅雷、蓝奏云、OneDrive、Google Drive、S3、SFTP 等
 ├── web/                  Vue 3 + Vite 面板（登录页 / 文件浏览 / 视频播放器）
-└── .github/workflows/release.yml   推送 v* 标签自动构建 Linux amd64/arm64 发布
+└── .github/workflows/release.yml   手动触发（Actions → release → 填 version）构建 Linux amd64/arm64 发布
 ```
 
 ## 发布
 
-推送标签自动触发 GitHub Actions 构建 Linux 静态二进制（musl，TLS 用 rustls，无 openssl 依赖）：
+在 Actions 页面手动触发 `release` 工作流（填 `version` 输入，如 `v0.1.0`），构建 Linux 静态二进制（musl，TLS 用 rustls，无 openssl 依赖）：
 
 ```
-git tag v0.1.0
-git push origin v0.1.0
+# 不在仓库里执行的等价操作：Actions → release → Run workflow，version 填 v0.1.0
 ```
 
 产物：`openlist-rs-linux-amd64.tar.gz` / `openlist-rs-linux-arm64.tar.gz`（附 sha256）。
+
+> 直接 `git push` 标签不会触发发布；`ci` 工作流在每次 push / PR 时跑 `cargo check` + `cargo clippy -D warnings` + `cargo test`。
