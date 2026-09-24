@@ -8,6 +8,11 @@
 #
 # 枚举坑：group 里的 update-types 用 major/minor/patch；ignore/allow 里才用 version-update:semver-*。
 # applies-to 默认是 version-updates，安全更新组必须显式写 applies-to: security-updates 才会匹配。
+#
+# versioning-strategy 各生态取值不同，写错会让 Dependabot 整个配置文件解析失败（所有更新全停）：
+#   cargo          → lockfile-only | auto            （increase 是 npm 系专用，cargo 写 increase 直接报错）
+#   npm            → lockfile-only | auto | increase | widen
+#   github-actions → 不支持该键
 version: 2
 updates:
   # Rust 依赖（Cargo.toml + Cargo.lock）
@@ -19,7 +24,7 @@ updates:
       time: "03:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
-    versioning-strategy: increase
+    versioning-strategy: auto
     commit-message:
       prefix: "chore"
       include: "scope"
