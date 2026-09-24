@@ -796,10 +796,11 @@ html.dark .list-item:hover {
   padding-right: 8px;
 }
 .fname-text {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  word-break: break-all;
   color: var(--ol-text);
 }
 .li-size {
@@ -1302,18 +1303,25 @@ html.dark .fab-item:hover {
   }
   .mobile-item {
     flex-wrap: wrap;
+    align-items: flex-start;
   }
   .mobile-item .mobile-row-info {
+    flex: 1 1 100%;
     width: 100%;
+    max-width: 100%;
   }
   .mobile-item .mobile-meta {
+    flex: 1 1 100%;
     width: 100%;
+    max-width: 100%;
     padding-left: 32px;
     order: 2;
   }
   .mobile-item .mobile-row-ops {
-    order: 3;
+    flex: 1 1 100%;
     width: 100%;
+    max-width: 100%;
+    order: 3;
   }
   .video-foot {
     flex-wrap: wrap;

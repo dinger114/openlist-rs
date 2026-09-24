@@ -7,7 +7,6 @@
     :loading="loggingIn"
     @update:form="(v) => (loginForm = v)"
     @login="doLogin"
-    @guest="guestBrowse"
   />
 
 <div class="app-shell">
@@ -316,16 +315,6 @@ async function doLogin() {
     loginError.value = e.message
   } finally {
     loggingIn.value = false
-  }
-}
-
-// 游客模式：直接尝试进入；后端要求登录时（401）会自动回到登录页
-async function guestBrowse() {
-  needLogin.value = false
-  try {
-    await loadAccounts()
-  } catch {
-    needLogin.value = true
   }
 }
 

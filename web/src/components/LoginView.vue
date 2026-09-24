@@ -62,15 +62,12 @@
         @keydown.enter="$emit('login')"
       />
 
-      <!-- 记住账号 / 忘记密码 -->
+      <!-- 记住账号 -->
       <div class="form-row">
         <label class="remember">
           <input v-model="remember" type="checkbox" class="checkbox" />
           <span>记住账号</span>
         </label>
-        <a class="forget" href="https://openlistteam.github.io/docs/" target="_blank" rel="noopener">
-          忘记密码?
-        </a>
       </div>
 
       <div v-if="error" class="alert alert-error">{{ error }}</div>
@@ -89,11 +86,6 @@
           {{ loading ? '登录中…' : '登录' }}
         </button>
       </div>
-
-      <!-- 以游客身份浏览 -->
-      <button type="button" class="btn-pair btn-guest" @click="$emit('guest')">
-        以游客身份浏览
-      </button>
 
       <!-- 底部：主题切换 -->
       <div class="login-extra">
@@ -115,7 +107,7 @@ defineProps({
   error: { type: String, default: '' },
   loading: { type: Boolean, default: false }
 })
-const emit = defineEmits(['login', 'update:form', 'guest'])
+const emit = defineEmits(['login', 'update:form'])
 
 const isDark = ref(false)
 const remember = ref(localStorage.getItem('ol-remember') === 'true')
@@ -283,7 +275,7 @@ defineExpose({
 .form-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   padding: 0 4px;
   font-size: 13px;
   margin-top: -4px;
@@ -301,13 +293,6 @@ defineExpose({
   height: 15px;
   accent-color: #0091ff;
   cursor: pointer;
-}
-.forget {
-  color: var(--ol-text-dim);
-}
-.forget:hover {
-  color: #0091ff;
-  text-decoration: none;
 }
 
 /* 按钮行：两个等宽按钮，配色取自官方截图（subtle 蓝） */
@@ -345,12 +330,6 @@ defineExpose({
   background: #e1f0ff;
   color: #006adc;
 }
-.btn-guest {
-  width: 100%;
-  margin-top: -4px;
-  background: #ede9fe;
-  color: #5746af;
-}
 html.dark .btn-clear {
   background: #12414a;
   color: #7edce8;
@@ -358,10 +337,6 @@ html.dark .btn-clear {
 html.dark .btn-login {
   background: #142c47;
   color: #6cb8ff;
-}
-html.dark .btn-guest {
-  background: #2a2444;
-  color: #b4a4f5;
 }
 
 .loader {
