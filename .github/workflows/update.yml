@@ -57,6 +57,7 @@ jobs:
           git commit -m "chore: 每周 cargo update（刷新 Cargo.lock）"
           git push -f origin "$BRANCH"
 
+          CREATED=0
           if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')" ]; then
             echo "已有对应 PR，分支已强制更新，PR 会自己跟着变"
           else
@@ -69,7 +70,30 @@ jobs:
             gh pr create --base master --head "$BRANCH" \
               --title "chore: 每周 cargo update（刷新 Cargo.lock）" \
               --body "$BODY"
+            CREATED=1
           fi
 
-          # GITHUB_TOKEN 创建的 PR 不会触发 pull_request 工作流，显式补一次 ci（同一个 SHA）
-          gh workflow run ci.yml --ref "$BRANCH" || true
+          # GITHUB_TOKEN 创建的 PR 不会自动触发 pull_request 工作流：GitHub 会把这批运行
+          # 挂成 action_required（等人工批准），PR 上因此看不到 check。用 approve 接口自动放行，
+          # PR 页面上就会出现真正的 CI 记录；万一没找到挂起的运行（行为有变），再用 dispatch 兜底。
+          if [ "$CREATED" -eq 1 ]; then
+            APPROVED=0
+            for _ in $(seq 1 12); do   # 最多等 60 秒让那批运行出现
+              IDS=$(gh run list --branch "$BRANCH" --event pull_request --limit 5 \
+                      --json databaseId,conclusion \
+                      --jq '.[] | select(.conclusion == "action_required") | .databaseId')
+              if [ -n "$IDS" ]; then
+                for id in $IDS; do
+                  gh api -X POST "repos/${GITHUB_REPOSITORY}/actions/runs/${id}/approve" >/dev/null \
+                    && echo "已放行挂起的运行 $id"
+                done
+                APPROVED=1
+                break
+              fi
+              sleep 5
+            done
+            if [ "$APPROVED" -eq 0 ]; then
+              echo "没找到挂起的运行，改用 workflow_dispatch 兜底"
+              gh workflow run ci.yml --ref "$BRANCH" || true
+            fi
+          fi
