@@ -797,3 +797,29 @@ fn urlencode(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// AES-128-ECB + PKCS7 已知向量（openssl enc -aes-128-ecb 独立生成）。
+    /// 锁定密文逐字节不变：cipher 0.5 从 GenericArray 迁到 hybrid-array 的 Array 后，
+    /// 这是登录/下载直链签名所用的加密，行为一变线上就登不上。
+    #[test]
+    fn aes_encrypt_hex_kat() {
+        let key: [u8; 16] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
+        ];
+        // 13 字节 → 补齐 1 块
+        assert_eq!(
+            Ilanzou::aes_encrypt_hex(b"1234567890123", &key),
+            "734706b9da64aacdf2206078da019788"
+        );
+        // 16 字节 → 额外补一整个块（PKCS7 边界）
+        assert_eq!(
+            Ilanzou::aes_encrypt_hex(b"0123456789abcdef", &key),
+            "2f5c4a71e95a5ce3f9e58cfaff5420956cc00a66d2ad83ffd76e9a2bcad89a01"
+        );
+    }
+}
