@@ -1,34 +1,75 @@
 name: update
 
+# 每周刷新 Cargo.lock（cargo update），有变化就开 PR 让 CI 把关，而不是直推 master。
+#
+# 为什么不再直推：GITHUB_TOKEN 造成的 push 不会触发 push 工作流 —— 直推 master 意味着
+# 那次锁文件更新没有任何 CI 记录；而且 cargo update 会带进传递依赖的新版本，一旦编不过
+# master 就红了。改成开 PR 后：CI 在 PR 上跑，绿了再合（这一步留给人点）。
+#
+# 为什么开完 PR 还要 dispatch ci：同样是 GITHUB_TOKEN 的限制 —— 它创建的 PR 不会触发
+# pull_request 工作流。显式 dispatch 一次 ci（跑在同一个 SHA 上），PR 上才会有 check。
 on:
+  schedule:
+    # 周一 03:23（CST）—— 比 Dependabot 的 03:00 稍晚，避免同时抢写 Cargo.lock
+    - cron: "23 19 * * 0"
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: write      # 推分支
+  pull-requests: write # 开 PR
+  actions: write       # 补 ci dispatch
+
+concurrency:
+  group: update-lockfile
+  cancel-in-progress: false
 
 jobs:
-  test-and-build:
+  update-lockfile:
     name: update
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-musl
+      - uses: dtolnay/rust-toolchain@stable
 
-
-      - name: Update Cargo.lock
+      - name: cargo update
         run: cargo update
 
-      - name: Commit updated Cargo.lock
+      - name: 有变化就开/更新 PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: chore/cargo-update
         run: |
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock 无变化，收工"
+            exit 0
+          fi
+
+          echo "=== Cargo.lock 变更摘要 ==="
+          git diff --stat -- Cargo.lock
+
+          git switch -c "$BRANCH"
           git add Cargo.lock
-          git diff --cached --quiet || git commit -m "chore: update Cargo.lock"
-          git push origin HEAD:master
+          git commit -m "chore: 每周 cargo update（刷新 Cargo.lock）"
+          git push -f origin "$BRANCH"
+
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')" ]; then
+            echo "已有对应 PR，分支已强制更新，PR 会自己跟着变"
+          else
+            BODY=$(printf '%s\n' \
+              '定时任务（.github/workflows/update.yml，每周一 03:23 CST）跑 `cargo update` 的产物。' \
+              '' \
+              '只动 `Cargo.lock`，不改 `Cargo.toml` 的版本要求 —— 刷的是约束范围内的最新版本（含传递依赖）。' \
+              '' \
+              '⚠️ 传递依赖的 0.x 小版本跳级同样可能是破坏性变更，所以这个 PR **不自动合并**：看 CI（cargo check / clippy / test）结果再决定，红了直接关掉即可。')
+            gh pr create --base master --head "$BRANCH" \
+              --title "chore: 每周 cargo update（刷新 Cargo.lock）" \
+              --body "$BODY"
+          fi
+
+          # GITHUB_TOKEN 创建的 PR 不会触发 pull_request 工作流，显式补一次 ci（同一个 SHA）
+          gh workflow run ci.yml --ref "$BRANCH" || true
