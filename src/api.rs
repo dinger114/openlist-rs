@@ -2524,7 +2524,7 @@ fn parse_range(s: &str, total: u64) -> Option<(u64, u64)> {
 }
 
 /// 按扩展名粗略推断 Content-Type（在线播放场景）
-fn content_type_by_ext(name: &str) -> &'static str {
+pub(crate) fn content_type_by_ext(name: &str) -> &'static str {
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     match ext.as_str() {
         "mp4" | "m4v" => "video/mp4",

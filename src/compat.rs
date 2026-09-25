@@ -46,7 +46,7 @@ const IMAGE_EXTS: &[&str] = &[
 ];
 const TEXT_EXTS: &str = "txt,htm,html,xml,java,properties,sql,js,md,json,conf,ini,vue,php,py,bat,gitignore,css,go,csv,c,h,sh,vtt,srt,ass,ssa";
 
-fn obj_type(name: &str, is_dir: bool) -> i64 {
+pub(crate) fn obj_type(name: &str, is_dir: bool) -> i64 {
     if is_dir {
         return T_FOLDER;
     }
@@ -66,7 +66,7 @@ fn obj_type(name: &str, is_dir: bool) -> i64 {
     T_UNKNOWN
 }
 
-fn normalize_path(p: &str) -> String {
+pub(crate) fn normalize_path(p: &str) -> String {
     let mut s = p.trim().to_string();
     if !s.starts_with('/') {
         s.insert(0, '/');
@@ -110,7 +110,7 @@ fn path_encode(p: &str) -> String {
 use crate::drivers::timeutil::civil_from_days;
 
 /// unix 毫秒 -> RFC3339（东八区），对齐 Go time.Time JSON 格式
-fn rfc3339_cst(ms: i64) -> String {
+pub(crate) fn rfc3339_cst(ms: i64) -> String {
     let secs = (ms / 1000) + 8 * 3600;
     let rem = (secs as u64) % 86400;
     let days = secs.div_euclid(86400);
@@ -122,7 +122,7 @@ fn rfc3339_cst(ms: i64) -> String {
 }
 
 /// 拼接父路径与子项名（对齐 Go `stdpath.Join`，父路径已规范化、名字不含 '/'）
-fn join_path(parent: &str, name: &str) -> String {
+pub(crate) fn join_path(parent: &str, name: &str) -> String {
     if parent.ends_with('/') {
         format!("{parent}{name}")
     } else {
@@ -226,7 +226,7 @@ impl AppState {
     /// 面板 /api/files 一直读缓存；协议侧过去每次直连驱动，客户端（xlist/rclone/WebDAV）
     /// 反复列同一目录时是纯浪费。写操作已通过 `invalidate_dir_cache` 精确失效，
     /// 编辑/删除账号时整体失效，`refresh=true` 可强制穿透。
-    async fn list_dir_cached(
+    pub(crate) async fn list_dir_cached(
         &self,
         acc_id: &str,
         fid: &str,
@@ -652,7 +652,7 @@ impl AppState {
     }
 
     /// 写操作后失效路径索引（该路径及其子树）
-    fn invalidate_index_prefix(&self, path: &str) {
+    pub(crate) fn invalidate_index_prefix(&self, path: &str) {
         let path = normalize_path(path);
         let prefix = format!("{path}/");
         self.index
@@ -662,7 +662,7 @@ impl AppState {
     }
 
     /// 失效某账号某目录的列表缓存（key = "{账号id}:{fid}"）
-    fn invalidate_dir_cache(&self, acc_id: &str, fid: &str) {
+    pub(crate) fn invalidate_dir_cache(&self, acc_id: &str, fid: &str) {
         self.list_cache.invalidate_key(&format!("{acc_id}:{fid}"));
     }
 }
