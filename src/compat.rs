@@ -209,8 +209,7 @@ impl AppState {
                 continue;
             }
             // 未命中：列出父目录并注册
-            let driver = self.get_driver(&acc_id).await?;
-            let children = driver.list(&entry.fid).await?;
+            let children = self.list_dir_cached(&acc_id, &entry.fid, false).await?;
             self.index_children(&prefix, &acc_id, &children);
             let hit = self.index.lock().unwrap().get(&full).cloned();
             let Some(hit) = hit else {
@@ -222,8 +221,34 @@ impl AppState {
         Ok((acc_id, entry))
     }
 
+    /// 列目录（带 ListCache，键与面板一致：`"{账号id}:{fid}"`）
+    ///
+    /// 面板 /api/files 一直读缓存；协议侧过去每次直连驱动，客户端（xlist/rclone/WebDAV）
+    /// 反复列同一目录时是纯浪费。写操作已通过 `invalidate_dir_cache` 精确失效，
+    /// 编辑/删除账号时整体失效，`refresh=true` 可强制穿透。
+    async fn list_dir_cached(
+        &self,
+        acc_id: &str,
+        fid: &str,
+        refresh: bool,
+    ) -> Result<Vec<Entry>, String> {
+        let key = format!("{acc_id}:{fid}");
+        if !refresh {
+            if let Some(cached) = self.list_cache.get(&key) {
+                return Ok(cached);
+            }
+        }
+        let driver = self.get_driver(acc_id).await?;
+        let entries = driver.list(fid).await?;
+        // 空列表不缓存：可能是一次抽风，避免把「目录是空的」钉住十分钟
+        if !entries.is_empty() {
+            self.list_cache.set(&key, entries.clone());
+        }
+        Ok(entries)
+    }
+
     /// 列目录（含虚拟根：根目录下是各账号文件夹）
-    async fn compat_list_dir(&self, path: &str) -> Result<Vec<Entry>, String> {
+    async fn compat_list_dir(&self, path: &str, refresh: bool) -> Result<Vec<Entry>, String> {
         let path = normalize_path(path);
         if path == "/" {
             let accounts: Vec<Account> = self.store.data.lock().unwrap().accounts.clone();
@@ -242,8 +267,7 @@ impl AppState {
         if !entry.is_dir {
             return Err(format!("不是目录: {path}"));
         }
-        let driver = self.get_driver(&acc_id).await?;
-        let children = driver.list(&entry.fid).await?;
+        let children = self.list_dir_cached(&acc_id, &entry.fid, refresh).await?;
         self.index_children(&path, &acc_id, &children);
         Ok(children)
     }
@@ -311,7 +335,7 @@ pub(crate) async fn compat_fs_list(
     State(st): State<AppState>,
     Json(req): Json<CompatListReq>,
 ) -> Response {
-    let mut entries = match st.compat_list_dir(&req.path).await {
+    let mut entries = match st.compat_list_dir(&req.path, req.refresh).await {
         Ok(e) => e,
         Err(e) => return compat_err(e, 500),
     };
