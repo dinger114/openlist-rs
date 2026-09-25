@@ -8,6 +8,14 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+/// 浏览器化 UA，与 Go 版 `drivers/base/client.go` 的 `base.UserAgent` 同源。
+///
+/// **不能留空**：reqwest 默认不发 `User-Agent`，部分站点/前置 CDN 会对无 UA 请求
+/// 直接回挑战页（HTTP 403 + HTML），被业务层吃成「AList 需要 token 或 username/password:
+/// `<!DOCTYPE html>…`」这类误导性报错。
+const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Apple macOS 26_1_0) AppleWebKit/537.36 \
+                          (KHTML, like Gecko) Safari/537.36 Chrome/142.0.0.0 OpenList/425.6.30";
+
 pub struct AlistV3 {
     address: String,
     meta_password: String,
@@ -32,7 +40,10 @@ impl AlistV3 {
             username,
             password,
             token: Mutex::new(token),
-            http: Client::new(),
+            http: Client::builder()
+                .user_agent(USER_AGENT)
+                .build()
+                .unwrap_or_else(|_| Client::new()),
         }
     }
 
