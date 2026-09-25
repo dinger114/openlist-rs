@@ -56,12 +56,16 @@
         </div>
       </div>
     </section>
+
+    <!-- WebDAV 入口（地址 / 认证 / 挂载方式） -->
+    <WebdavCard :username="username" />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import Icon from './Icon.vue'
+import WebdavCard from './WebdavCard.vue'
 
 const emit = defineEmits(['saved'])
 
