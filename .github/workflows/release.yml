@@ -16,8 +16,33 @@ env:
   BIN_NAME: openlist-rs
 
 jobs:
+  # 前端只构建一次：产物与平台无关，5 个矩阵 job 下载同一份
+  frontend:
+    name: build frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Upload web/dist
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
   build:
     name: build (${{ matrix.artifact }})
+    needs: frontend
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -48,15 +73,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 1. 前端构建（产物 web/dist 由 rust-embed 在编译期嵌入）
-      - uses: actions/setup-node@v7
+      # 1. 前端产物（由 frontend job 构建一次，rust-embed 编译期嵌入）
+      - name: Download web/dist
+        uses: actions/download-artifact@v8
         with:
-          node-version: 22
-      - name: Build frontend
-        working-directory: web
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
+          name: web-dist
+          path: web/dist
 
       - name: Inject version into Cargo.toml
         shell: bash
