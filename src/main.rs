@@ -8,6 +8,7 @@ mod password;
 mod ratelimit;
 mod sign;
 mod state;
+mod webdav;
 
 use axum::{
     routing::{delete, get, patch, post},
@@ -119,6 +120,11 @@ async fn main() {
         .route("/api/fs/put/progress", get(compat::compat_fs_put_progress))
         .route("/d/{*path}", get(compat::compat_down))
         .route("/p/{*path}", get(compat::compat_proxy))
+        // WebDAV 服务（自带 Basic/Bearer 鉴权，见 src/webdav.rs）
+        // `/dav/` 必须单独注册：catch-all 段不匹配空路径，否则带尾斜杠的请求会掉到前端兜底
+        .route("/dav", axum::routing::any(webdav::handle_root))
+        .route("/dav/", axum::routing::any(webdav::handle_root))
+        .route("/dav/{*path}", axum::routing::any(webdav::handle_path))
         // 上传没有体量上限：/api/fs/form 是 multipart 提取器，axum 默认 2MB 上限会让稍大的
         // 文件直接 400（"Error parsing multipart/form-data request"）；内容由 handler 边收边落盘，
         // /api/fs/put 本来就是流式，不受上限保护也无需它
