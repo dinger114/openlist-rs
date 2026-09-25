@@ -84,6 +84,7 @@ npm run build   # 产物输出 web/dist/，cargo 编译时嵌入
 | 端点 | 说明 |
 |---|---|
 | POST `/api/auth/login` | `{username,password,otp_code}` → `data.token` |
+| GET `/api/me` | 返回当前用户（`username`/`base_path`/`role`/`permission`）；无 token 时 `code 401` + `Guest user is disabled, login please`（本服务无 guest 概念） |
 | POST `/api/fs/list` | `{path,page,per_page,...}` + `Authorization: <token>` 头 |
 | POST `/api/fs/get` | 返回 `raw_url`（指向本服务 `/p` 代理） |
 | GET `/d/{*path}` / `/p/{*path}` | 官方同款下载/代理路径，支持 Range；**必须带 `?sign=` 链接签名**（或有效面板会话） |
@@ -93,6 +94,8 @@ npm run build   # 产物输出 web/dist/，cargo 编译时嵌入
 路径规则：根目录 `/` 下列出各账号文件夹（以备注名命名），进入即浏览对应网盘。响应结构与 OpenList 4.2.6 对齐（HTTP 200 + `{code,message,data}`、`type` 枚举 0未知/1文件夹/2视频/3音频、`raw_url` 为绝对地址）。
 
 NovaTV 接入：设置里添加 OpenList → 服务器地址填本服务地址 → 用户名密码填启动参数里的面板账号。
+
+未实现的端点（如 `/api/fs/dirs`、`/api/fs/search`）返回 JSON 404 `{code,message,data}`，不会掉进前端兜底 —— 客户端把 `index.html` 当 JSON 解析只会报出与真实原因无关的类型错误。
 
 ## WebDAV 服务
 

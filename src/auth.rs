@@ -25,13 +25,19 @@ pub(crate) async fn auth_guard(
     {
         let token = extract_token(&req);
         // 会话校验带 TTL 与滑动续期（见 state::SESSION_TTL）；过期条目会被顺手删除
-        let valid = token.map(|t| st.session_valid(&t)).unwrap_or(false);
+        let valid = token.as_ref().map(|t| st.session_valid(t)).unwrap_or(false);
         if !valid {
-            // OpenList 协议客户端（/api/fs/*）习惯 HTTP200 + code 包装；
-            // 自有面板 API 保持标准 HTTP 401
-            if path.starts_with("/api/fs") {
-                let body =
-                    Json(json!({ "code": 401, "message": "token is invalid", "data": null }));
+            // OpenList 协议客户端（/api/fs/*、/api/me）习惯 HTTP200 + code 包装；
+            // 自有面板 API 保持标准 HTTP 401。
+            // 无 token 与 token 失效给不同文案，对齐上游 AList 中间件
+            // （上游：无 token 走 guest，guest 被禁用时报 "Guest user is disabled, login please"）
+            if path.starts_with("/api/fs") || path == "/api/me" {
+                let msg = if token.is_none() {
+                    "Guest user is disabled, login please"
+                } else {
+                    "token is invalid"
+                };
+                let body = Json(json!({ "code": 401, "message": msg, "data": null }));
                 return (StatusCode::OK, body).into_response();
             }
             return (

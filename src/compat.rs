@@ -161,6 +161,37 @@ fn compat_err(msg: impl Into<String>, code: i64) -> Response {
         .into_response()
 }
 
+/// GET /api/me —— AList 兼容：返回当前登录用户。
+///
+/// 客户端（xlist 等）在每个页面的 onInit 里都会调它；缺了这个端点会掉进前端 SPA 兜底
+/// 拿回 index.html，客户端按 JSON 解析就得到「String 不是 int 索引」这类莫名其妙的错误。
+pub(crate) async fn compat_me(State(st): State<AppState>) -> Response {
+    let username = st.auth.read().unwrap().user.clone();
+    (StatusCode::OK, Json(me_payload(&username))).into_response()
+}
+
+/// AList `/api/me` 的 data 结构（字段名与上游 `handles.UserResp{model.User}` 对齐）
+fn me_payload(username: &str) -> Value {
+    json!({
+        "code": 200,
+        "message": "success",
+        "data": {
+            "id": 1,
+            "username": username,
+            "password": "",
+            "base_path": "/",
+            // 上游角色枚举：GENERAL=0 / GUEST=1 / ADMIN=2
+            "role": 2,
+            // 与上游 admin 一致（0x71FF）：含见隐藏文件、免密访问、mkdir/上传、rename、move、copy、remove 等位
+            "permission": 0x71FF,
+            "disabled": false,
+            "sso_id": "",
+            "otp": false,
+            "allow_ldap": false
+        }
+    })
+}
+
 // ---------- 路径索引（AppState 的兼容层方法） ----------
 
 impl AppState {
@@ -1049,6 +1080,25 @@ pub(crate) async fn compat_fs_put_progress(State(st): State<AppState>) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn me_payload_matches_alist_shape() {
+        let v = me_payload("admin");
+        assert_eq!(v["code"], 200);
+        assert_eq!(v["message"], "success");
+        let d = &v["data"];
+        assert_eq!(d["username"], "admin");
+        assert_eq!(d["password"], ""); // 上游强制清空密码
+        assert_eq!(d["base_path"], "/");
+        assert_eq!(d["role"], 2); // ADMIN
+        assert_eq!(d["disabled"], false);
+        // 权限位：mkdir(3)/rename(4)/move(5)/copy(6)/remove(7) 必须都置位，
+        // 否则客户端（xlist 的 PermissionHelper.canWrite）会把新建/删除入口隐藏
+        let perm = d["permission"].as_i64().unwrap();
+        for bit in 3..=7 {
+            assert!(perm & (1 << bit) != 0, "permission 缺 bit {bit}");
+        }
+    }
 
     #[test]
     fn test_normalize_path() {

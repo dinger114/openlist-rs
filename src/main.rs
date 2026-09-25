@@ -11,12 +11,28 @@ mod state;
 mod webdav;
 
 use axum::{
+    response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
     Router,
 };
 use clap::{Parser, Subcommand};
 use state::AppState;
 use std::io::{BufRead, Write};
+
+/// 未匹配路径的兜底：`/api/*` 回 JSON 404，其余交给前端静态资源。
+///
+/// 不能把未知的 API 路径也交给 SPA 兜底 —— 客户端拿到 index.html 当 JSON 解析，
+/// 报的是「String 不是 int 索引」这类与真实原因无关的错误。
+async fn fallback_handler(req: axum::extract::Request) -> Response {
+    if req.uri().path().starts_with("/api") {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({ "code": 404, "message": "not found", "data": null })),
+        )
+            .into_response();
+    }
+    assets::serve_static(req).await
+}
 
 // ---------- CLI ----------
 
@@ -107,6 +123,7 @@ async fn main() {
         .route("/api/web/settings", post(auth::update_web_settings))
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
+        .route("/api/me", get(compat::compat_me))
         .route("/api/fs/list", post(compat::compat_fs_list))
         .route("/api/fs/get", post(compat::compat_fs_get))
         // 写操作（对齐 Go 版 OpenList 端点）
@@ -133,7 +150,7 @@ async fn main() {
             state.clone(),
             auth::auth_guard,
         ))
-        .fallback(assets::serve_static)
+        .fallback(fallback_handler)
         .with_state(state);
 
     let addr = format!("{}:{}", args.addr, args.port);
