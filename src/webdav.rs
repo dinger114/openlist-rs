@@ -18,9 +18,13 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::Engine;
+use futures_util::TryStreamExt;
 use std::net::SocketAddr;
+use std::pin::Pin;
+use tokio::io::AsyncRead;
 
 use crate::config::Entry;
+use crate::drivers::PutInput;
 use crate::state::AppState;
 
 /// OPTIONS 广告支持的方法
@@ -59,7 +63,7 @@ async fn dispatch(
     headers: HeaderMap,
     _uri: Uri,
     raw_path: String,
-    _body: Body,
+    body: Body,
 ) -> Response {
     let mut resp = match method {
         // 客户端探测能力时不带凭据，必须放行
@@ -73,14 +77,16 @@ async fn dispatch(
                     let depth = parse_depth(headers.get("depth").and_then(|v| v.to_str().ok()));
                     propfind(&st, &raw_path, depth, &headers).await
                 }
-                "GET" | "HEAD" => not_implemented(),
-                "PUT" => not_implemented(),
-                "MKCOL" => not_implemented(),
-                "DELETE" => not_implemented(),
-                "MOVE" | "COPY" => not_implemented(),
-                "LOCK" => not_implemented(),
-                "UNLOCK" => not_implemented(),
-                "PROPPATCH" => not_implemented(),
+                "GET" => get_file(&st, &raw_path, &headers, false).await,
+                "HEAD" => get_file(&st, &raw_path, &headers, true).await,
+                "PUT" => put_file(&st, &raw_path, &headers, body).await,
+                "MKCOL" => mkcol(&st, &raw_path).await,
+                "DELETE" => delete_entry(&st, &raw_path).await,
+                "MOVE" => move_or_copy(&st, &raw_path, &headers, true).await,
+                "COPY" => move_or_copy(&st, &raw_path, &headers, false).await,
+                "LOCK" => lock_resource(&raw_path, &headers, body).await,
+                "UNLOCK" => unlock_resource(&raw_path, &headers).await,
+                "PROPPATCH" => proppatch(&raw_path).await,
                 _ => (
                     StatusCode::METHOD_NOT_ALLOWED,
                     [(header::ALLOW, DAV_ALLOW)],
@@ -99,10 +105,6 @@ async fn dispatch(
         header::HeaderValue::from_static("DAV"),
     );
     resp
-}
-
-fn not_implemented() -> Response {
-    (StatusCode::NOT_IMPLEMENTED, "尚未实现").into_response()
 }
 
 /// OPTIONS：回能力头（DAV 版本、允许的方法、支持 Range）
@@ -443,6 +445,459 @@ fn map_driver_error(msg: &str) -> Response {
     (code, msg.to_string()).into_response()
 }
 
+// ---------- GET / HEAD ----------
+
+/// HEAD：只回元信息，不去取直链（省一次上游往返；DAV 客户端靠它判断大小/时间）
+fn head_response(e: &Entry) -> Response {
+    let mut resp = (StatusCode::OK, Body::empty()).into_response();
+    let h = resp.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_str(crate::api::content_type_by_ext(&e.name))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("application/octet-stream")),
+    );
+    h.insert(
+        header::CONTENT_LENGTH,
+        header::HeaderValue::from_str(&e.size.to_string())
+            .unwrap_or_else(|_| header::HeaderValue::from_static("0")),
+    );
+    h.insert(
+        header::ACCEPT_RANGES,
+        header::HeaderValue::from_static("bytes"),
+    );
+    if let Ok(v) = header::HeaderValue::from_str(&etag_of(e)) {
+        h.insert(header::ETAG, v);
+    }
+    if let Some(ms) = e.updated_at {
+        if let Ok(v) = header::HeaderValue::from_str(&http_date(ms)) {
+            h.insert(header::LAST_MODIFIED, v);
+        }
+    }
+    resp
+}
+
+/// GET/HEAD：沿用兼容层的取流策略 —— 账号开 `server_proxy` 或驱动要求代理时服务端中转
+/// （Range 由 `proxy_stream` 处理），否则 302 跳直链让客户端直连。
+async fn get_file(st: &AppState, raw_path: &str, headers: &HeaderMap, head_only: bool) -> Response {
+    let path = crate::compat::normalize_path(raw_path);
+    let (acc_id, entry) = match st.resolve_path(&path).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    if entry.is_dir {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "OPTIONS, PROPFIND")],
+            "是目录，不是文件",
+        )
+            .into_response();
+    }
+    if head_only {
+        return head_response(&entry);
+    }
+
+    let server_proxy = {
+        let data = st.store.data.lock().unwrap();
+        data.accounts
+            .iter()
+            .find(|a| a.id == acc_id)
+            .map(|a| a.server_proxy)
+            .unwrap_or(false)
+    };
+    let Ok(driver) = st.get_driver(&acc_id).await else {
+        return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
+    };
+    if server_proxy {
+        return match crate::api::proxy_stream(&driver, &entry, headers, "inline").await {
+            Ok(r) => r,
+            Err((s, m)) => (s, m).into_response(),
+        };
+    }
+    match driver.download(&entry).await {
+        // 直链与请求 UA 绑定时浏览器直连会 403，改走中转
+        Ok(info) if info.proxy => {
+            match crate::api::proxy_stream(&driver, &entry, headers, "inline").await {
+                Ok(r) => r,
+                Err((s, m)) => (s, m).into_response(),
+            }
+        }
+        Ok(info) => axum::response::Redirect::temporary(&info.url).into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("获取直链失败: {e}")).into_response(),
+    }
+}
+
+// ---------- 写操作 ----------
+
+/// 拆出 (父目录路径, 末段名)；虚拟根（`/` 或 `/账号名`）不可直接写
+fn split_parent(path: &str) -> Option<(String, String)> {
+    let name = path.rsplit('/').next().unwrap_or("").to_string();
+    if name.is_empty() {
+        return None;
+    }
+    match path.rfind('/') {
+        Some(i) if i > 0 => Some((path[..i].to_string(), name)),
+        _ => None,
+    }
+}
+
+/// PUT：流式落盘（不缓冲整文件），Content-Length 必填
+async fn put_file(st: &AppState, raw_path: &str, headers: &HeaderMap, body: Body) -> Response {
+    let path = crate::compat::normalize_path(raw_path);
+    let Some((parent_path, name)) = split_parent(&path) else {
+        return (StatusCode::CONFLICT, "不能在虚拟根目录上传").into_response();
+    };
+    let Some(size) = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+    else {
+        // DAV 客户端（含访达）总是带 Content-Length；缺了说明是异常请求
+        return (StatusCode::LENGTH_REQUIRED, "PUT 需要 Content-Length").into_response();
+    };
+    let existed = st.resolve_path(&path).await.is_ok();
+    let (acc_id, dst_fid) = match st.resolve_write_dir(&parent_path).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    let Ok(driver) = st.get_driver(&acc_id).await else {
+        return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
+    };
+
+    let reader: Pin<Box<dyn AsyncRead + Send>> = Box::pin(tokio_util::io::StreamReader::new(
+        body.into_data_stream().map_err(std::io::Error::other),
+    ));
+    let input = PutInput { name, size, reader };
+    if let Err(e) = driver.put(&dst_fid, input).await {
+        return map_driver_error(&e);
+    }
+    st.invalidate_dir_cache(&acc_id, &dst_fid);
+    st.invalidate_index_prefix(&path);
+
+    if existed {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        let mut resp = StatusCode::CREATED.into_response();
+        if let Ok(v) = header::HeaderValue::from_str(&href_for(&path, false)) {
+            resp.headers_mut().insert(header::LOCATION, v);
+        }
+        resp
+    }
+}
+
+/// MKCOL：新建集合。已存在按 RFC 4918 回 405；请求体忽略（部分客户端会发 XML）
+async fn mkcol(st: &AppState, raw_path: &str) -> Response {
+    let path = crate::compat::normalize_path(raw_path);
+    let Some((parent_path, name)) = split_parent(&path) else {
+        return (StatusCode::CONFLICT, "不能在虚拟根目录新建集合").into_response();
+    };
+    if st.resolve_path(&path).await.is_ok() {
+        return (StatusCode::METHOD_NOT_ALLOWED, "已存在").into_response();
+    }
+    let (acc_id, parent_fid) = match st.resolve_write_dir(&parent_path).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    let Ok(driver) = st.get_driver(&acc_id).await else {
+        return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
+    };
+    if let Err(e) = driver.mkdir(&parent_fid, &name).await {
+        return map_driver_error(&e);
+    }
+    st.invalidate_dir_cache(&acc_id, &parent_fid);
+    st.invalidate_index_prefix(&path);
+    StatusCode::CREATED.into_response()
+}
+
+/// DELETE：文件或目录（驱动侧决定递归语义，如 local 用 remove_dir_all）
+async fn delete_entry(st: &AppState, raw_path: &str) -> Response {
+    let path = crate::compat::normalize_path(raw_path);
+    let (acc_id, parent_fid, entry) = match st.resolve_write_entry(&path).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    let Ok(driver) = st.get_driver(&acc_id).await else {
+        return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
+    };
+    if let Err(e) = driver.remove(&parent_fid, &entry).await {
+        return map_driver_error(&e);
+    }
+    st.invalidate_dir_cache(&acc_id, &parent_fid);
+    st.invalidate_index_prefix(&path);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// 解析 `Destination` 头（绝对 URL 或绝对路径），返回本服务内的路径
+fn dav_destination(raw: &str, host_header: Option<&str>) -> Option<String> {
+    let raw = raw.trim();
+    let path = if let Some(rest) = raw
+        .strip_prefix("http://")
+        .or_else(|| raw.strip_prefix("https://"))
+    {
+        // 带主机：主机不同则拒绝（跨服务复制无意义）
+        let i = rest.find('/')?;
+        let (host, p) = (&rest[..i], &rest[i..]);
+        if let Some(h) = host_header {
+            if !host.eq_ignore_ascii_case(h) {
+                return None;
+            }
+        }
+        p
+    } else {
+        raw
+    };
+    let p = path.split('?').next().unwrap_or(path);
+    let p = p.strip_prefix("/dav").unwrap_or(p);
+    let p = if p.is_empty() { "/" } else { p };
+    Some(crate::compat::normalize_path(
+        &crate::compat::percent_decode(p),
+    ))
+}
+
+/// MOVE / COPY：同账号内改名或跨目录搬运
+async fn move_or_copy(
+    st: &AppState,
+    raw_path: &str,
+    headers: &HeaderMap,
+    is_move: bool,
+) -> Response {
+    let src = crate::compat::normalize_path(raw_path);
+    let Some(dest_raw) = headers.get("destination").and_then(|v| v.to_str().ok()) else {
+        return (StatusCode::BAD_REQUEST, "缺少 Destination 头").into_response();
+    };
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    let Some(dest) = dav_destination(dest_raw, host) else {
+        return (StatusCode::BAD_REQUEST, "Destination 不在本服务").into_response();
+    };
+    if dest == src {
+        return (StatusCode::FORBIDDEN, "源与目标相同").into_response();
+    }
+    if dest.starts_with(&format!("{}/", src.trim_end_matches('/'))) {
+        return (StatusCode::FORBIDDEN, "不能把集合搬进自身子目录").into_response();
+    }
+    let overwrite = !headers
+        .get("overwrite")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("F"))
+        .unwrap_or(false);
+    let dest_exists = st.resolve_path(&dest).await.is_ok();
+    if dest_exists && !overwrite {
+        return (StatusCode::PRECONDITION_FAILED, "目标已存在且 Overwrite: F").into_response();
+    }
+
+    let (acc_id, src_parent_fid, entry) = match st.resolve_write_entry(&src).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    let Some((dest_parent_path, dest_name)) = split_parent(&dest) else {
+        return (StatusCode::CONFLICT, "目标路径不合法").into_response();
+    };
+    let (dst_acc, dst_parent_fid) = match st.resolve_write_dir(&dest_parent_path).await {
+        Ok(v) => v,
+        Err(e) => return map_driver_error(&e),
+    };
+    if dst_acc != acc_id {
+        return (StatusCode::BAD_GATEWAY, "不支持跨账号搬运").into_response();
+    }
+    let Ok(driver) = st.get_driver(&acc_id).await else {
+        return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
+    };
+
+    // 同目录改名直接 rename；否则搬进目标目录（驱动 copy/move 只认目录 fid，保留原名）
+    let r = if src_parent_fid == dst_parent_fid {
+        driver.rename(&src_parent_fid, &entry, &dest_name).await
+    } else {
+        let r = if is_move {
+            driver
+                .move_entry(&src_parent_fid, &entry, &dst_parent_fid)
+                .await
+        } else {
+            driver.copy(&src_parent_fid, &entry, &dst_parent_fid).await
+        };
+        match r {
+            // 目标名与原名不同：驱动只认目录 fid（落地保留原名），再改名到客户端要的名字。
+            // 改名对象是「目标目录 + 原名」——先失效目标目录缓存，否则索引还看不到刚落地的文件
+            Ok(()) if dest_name != entry.name => {
+                st.invalidate_dir_cache(&acc_id, &dst_parent_fid);
+                st.invalidate_index_prefix(&dest_parent_path);
+                let landed = format!("{}/{}", dest_parent_path.trim_end_matches('/'), entry.name);
+                match st.resolve_write_entry(&landed).await {
+                    Ok((_, parent, moved)) => driver.rename(&parent, &moved, &dest_name).await,
+                    Err(e) => Err(e),
+                }
+            }
+            other => other,
+        }
+    };
+    if let Err(e) = r {
+        return map_driver_error(&e);
+    }
+    st.invalidate_dir_cache(&acc_id, &src_parent_fid);
+    st.invalidate_dir_cache(&acc_id, &dst_parent_fid);
+    st.invalidate_index_prefix(&src);
+    st.invalidate_index_prefix(&dest);
+
+    if dest_exists {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        StatusCode::CREATED.into_response()
+    }
+}
+
+// ---------- 锁 ----------
+
+struct LockEntry {
+    path: String,
+    expires: std::time::Instant,
+}
+
+/// 进程内锁表（单管理员场景够用；重启即失效，客户端会重新 LOCK）
+fn locks() -> &'static std::sync::Mutex<std::collections::HashMap<String, LockEntry>> {
+    static LOCKS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, LockEntry>>,
+    > = std::sync::OnceLock::new();
+    LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// `Timeout: Second-3600` / `Infinite` → 秒数（默认 1 小时，封顶 7 天）
+fn parse_timeout(headers: &HeaderMap) -> u64 {
+    let raw = headers
+        .get("timeout")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    for part in raw.split(',') {
+        let p = part.trim();
+        if let Some(n) = p.strip_prefix("Second-") {
+            if let Ok(v) = n.parse::<u64>() {
+                return v.clamp(60, 7 * 24 * 3600);
+            }
+        }
+    }
+    3600
+}
+
+fn sweep_locks(map: &mut std::collections::HashMap<String, LockEntry>) {
+    let now = std::time::Instant::now();
+    map.retain(|_, l| l.expires > now);
+}
+
+fn activelock_xml(token: &str, depth: u32, secs: u64) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery>\
+         <D:activelock><D:locktype><D:write/></D:locktype>\
+         <D:lockscope><D:exclusive/></D:lockscope><D:depth>{depth}</D:depth>\
+         <D:timeout>Second-{secs}</D:timeout>\
+         <D:locktoken><D:href>{token}</D:href></D:locktoken></D:activelock>\
+         </D:lockdiscovery></D:prop>"
+    )
+}
+
+/// LOCK：发新锁（空 body = 刷新）。不做 `If:` 强制校验，只保证客户端拿到 token
+async fn lock_resource(raw_path: &str, headers: &HeaderMap, body: Body) -> Response {
+    let path = crate::compat::normalize_path(raw_path);
+    let depth = parse_depth(headers.get("depth").and_then(|v| v.to_str().ok()));
+    let secs = parse_timeout(headers);
+    let has_body = headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    let _ = body; // lockinfo 内容不参与决策（独占写锁）
+
+    if !has_body {
+        // 刷新：从 If / Lock-Token 里找已发出的 token
+        let mut map = locks().lock().unwrap();
+        sweep_locks(&mut map);
+        let if_hdr = headers
+            .get("if")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let token = map
+            .iter()
+            .find(|(t, _)| if_hdr.contains(t.as_str()))
+            .map(|(t, _)| t.clone());
+        match token {
+            Some(t) => {
+                if let Some(l) = map.get_mut(&t) {
+                    l.expires = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+                }
+                let mut resp = (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+                    activelock_xml(&t, depth, secs),
+                )
+                    .into_response();
+                if let Ok(v) = header::HeaderValue::from_str(&format!("<{t}>")) {
+                    resp.headers_mut().insert("lock-token", v);
+                }
+                resp
+            }
+            None => (StatusCode::BAD_REQUEST, "刷新锁需要 If 头带锁 token").into_response(),
+        }
+    } else {
+        let token = format!("opaquelocktoken:{}", uuid::Uuid::new_v4());
+        {
+            let mut map = locks().lock().unwrap();
+            sweep_locks(&mut map);
+            // 同一路径重复 LOCK：丢掉旧锁让新 token 生效（不强制 If 校验，避免客户端忘了 UNLOCK 就写不动）
+            map.retain(|_, l| l.path != path);
+            map.insert(
+                token.clone(),
+                LockEntry {
+                    path: path.clone(),
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(secs),
+                },
+            );
+        }
+        let mut resp = (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+            activelock_xml(&token, depth, secs),
+        )
+            .into_response();
+        if let Ok(v) = header::HeaderValue::from_str(&format!("<{token}>")) {
+            resp.headers_mut().insert("lock-token", v);
+        }
+        resp
+    }
+}
+
+/// UNLOCK：回收 token
+async fn unlock_resource(_raw_path: &str, headers: &HeaderMap) -> Response {
+    let raw = headers
+        .get("lock-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .to_string();
+    if raw.is_empty() {
+        return (StatusCode::BAD_REQUEST, "缺少 Lock-Token 头").into_response();
+    }
+    let mut map = locks().lock().unwrap();
+    sweep_locks(&mut map);
+    if map.remove(&raw).is_some() {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (StatusCode::CONFLICT, "锁 token 不存在").into_response()
+    }
+}
+
+/// PROPPATCH：属性一律只读（回 403 propstat），不做属性持久化
+async fn proppatch(_raw_path: &str) -> Response {
+    let body = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\">\
+                <D:response><D:propstat><D:prop/><D:status>HTTP/1.1 403 Forbidden</D:status>\
+                </D:propstat></D:response></D:multistatus>";
+    (
+        StatusCode::MULTI_STATUS,
+        [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+        body,
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,6 +1050,115 @@ mod tests {
         assert!(body.contains("xmlns:D=\"DAV:\""));
         assert!(body.ends_with("</D:multistatus>"));
         assert_eq!(body.matches("<D:response>").count(), 1);
+    }
+
+    #[test]
+    fn head_response_reports_metadata() {
+        let e = Entry {
+            name: "song.mp3".to_string(),
+            size: 5_219_003,
+            updated_at: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        let r = head_response(&e);
+        assert_eq!(r.status(), StatusCode::OK);
+        let h = r.headers();
+        assert_eq!(h.get(header::CONTENT_LENGTH).unwrap(), "5219003");
+        assert_eq!(h.get(header::CONTENT_TYPE).unwrap(), "audio/mpeg");
+        assert_eq!(h.get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert_eq!(
+            h.get(header::LAST_MODIFIED).unwrap(),
+            "Tue, 14 Nov 2023 22:13:20 GMT"
+        );
+        assert_eq!(h.get(header::ETAG).unwrap(), "\"5219003-1700000000000\"");
+    }
+
+    #[test]
+    fn split_parent_rejects_virtual_root() {
+        assert_eq!(split_parent("/a"), None);
+        assert_eq!(split_parent("/"), None);
+        assert_eq!(
+            split_parent("/acc/dir/f.mp3"),
+            Some(("/acc/dir".to_string(), "f.mp3".to_string()))
+        );
+        assert_eq!(
+            split_parent("/acc/f.mp3"),
+            Some(("/acc".to_string(), "f.mp3".to_string()))
+        );
+    }
+
+    #[test]
+    fn destination_accepts_path_and_url() {
+        assert_eq!(dav_destination("/dav/a/b.mp3", None).unwrap(), "/a/b.mp3");
+        assert_eq!(
+            dav_destination(
+                "http://127.0.0.1:5244/dav/a/%E4%B8%AD.mp3",
+                Some("127.0.0.1:5244")
+            )
+            .unwrap(),
+            "/a/中.mp3"
+        );
+        // 主机不匹配 / 缺主机段 → 拒绝
+        assert_eq!(
+            dav_destination("http://other:5244/dav/a", Some("127.0.0.1:5244")),
+            None
+        );
+        assert_eq!(dav_destination("http://127.0.0.1:5244", None), None);
+        // 带查询串也剥掉
+        assert_eq!(dav_destination("/dav/a/b?x=1", None).unwrap(), "/a/b");
+    }
+
+    #[test]
+    fn timeout_parsing_is_clamped() {
+        let mut h = HeaderMap::new();
+        h.insert("timeout", "Second-120".parse().unwrap());
+        assert_eq!(parse_timeout(&h), 120);
+        h.insert("timeout", "Infinite".parse().unwrap());
+        assert_eq!(parse_timeout(&h), 3600);
+        h.insert("timeout", "Second-99999999".parse().unwrap());
+        assert_eq!(parse_timeout(&h), 7 * 24 * 3600);
+        h.insert("timeout", "Second-10".parse().unwrap());
+        assert_eq!(parse_timeout(&h), 60);
+    }
+
+    #[test]
+    fn locks_roundtrip_and_sweep() {
+        let token = "opaquelocktoken:test-roundtrip";
+        {
+            let mut m = locks().lock().unwrap();
+            m.insert(
+                token.to_string(),
+                LockEntry {
+                    path: "/a".to_string(),
+                    expires: std::time::Instant::now() + std::time::Duration::from_secs(60),
+                },
+            );
+        }
+        // 过期条目会被清理
+        {
+            let mut m = locks().lock().unwrap();
+            m.insert(
+                "opaquelocktoken:expired".to_string(),
+                LockEntry {
+                    path: "/b".to_string(),
+                    expires: std::time::Instant::now() - std::time::Duration::from_secs(1),
+                },
+            );
+            sweep_locks(&mut m);
+            assert!(m.contains_key(token));
+            assert!(!m.contains_key("opaquelocktoken:expired"));
+            m.remove(token);
+        }
+    }
+
+    #[test]
+    fn activelock_xml_has_token_and_timeout() {
+        let x = activelock_xml("opaquelocktoken:abc", 1, 3600);
+        assert!(x.contains("<D:write/>"));
+        assert!(x.contains("<D:exclusive/>"));
+        assert!(x.contains("<D:depth>1</D:depth>"));
+        assert!(x.contains("<D:timeout>Second-3600</D:timeout>"));
+        assert!(x.contains("opaquelocktoken:abc"));
     }
 
     #[test]
