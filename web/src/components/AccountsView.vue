@@ -750,6 +750,15 @@
             <p class="hint-text">根目录含 all / albums / share_albums。下载走代理。</p>
           </template>
 
+          <template v-else-if="form.driver === 'netease_music'">
+            <label class="field"><span>Cookie</span>
+              <textarea class="input" v-model="form.cookie" placeholder="浏览器登录 music.163.com 后复制完整 Cookie（需含 __csrf 与 MUSIC_U）"></textarea></label>
+            <p class="hint-text">只读挂载：列出云盘歌曲并可播放/下载，不支持上传、删除、重命名。获取方式：浏览器登录 music.163.com → F12 → 网络 → 任选一个请求复制完整 Cookie（约几个月有效）。</p>
+            <label class="field"><span>每页拉取条数（可选，默认 200）</span>
+              <input class="input" type="number" v-model.number="form.song_limit" placeholder="200" /></label>
+            <p class="hint-text">只是每页大小，列表会按页把云盘歌曲全部取回。</p>
+          </template>
+
           <template v-else-if="form.driver === 'halalcloud_open'">
             <label class="field"><span>Client ID</span>
               <input class="input" v-model="form.client_id" placeholder="halalcloud 开发者 client_id" /></label>
@@ -989,6 +998,7 @@ const DRIVERS = [
   { value: 'terabox', label: 'Terabox' },
   { value: 'ilanzou', label: '蓝奏云优创' },
   { value: 'halalcloud_open', label: 'halalcloud' },
+  { value: 'netease_music', label: '网易云音乐' },
   { value: 'bunny', label: 'BunnyCDN' },
   { value: 'virtual', label: '虚拟存储' }
 ]
@@ -1062,6 +1072,7 @@ const form = reactive({
   link_method: 'download',
   num_file: 5,
   num_folder: 0,
+  song_limit: 200,
   repo_id: '',
   repo_pwd: '',
   site: 'ilanzou',
@@ -1097,6 +1108,7 @@ function resetForm() {
   form.server_proxy = false
   form.num_file = 5
   form.num_folder = 0
+  form.song_limit = 200
   form.repo_id = ''
   form.repo_pwd = ''
   form.site = 'ilanzou'
@@ -1134,6 +1146,7 @@ async function startEdit(account) {
   form.username = ''
   form.password = ''
   form.refresh_token = ''
+  form.song_limit = 200
   form.authorization = ''
   form.root_path = ''
   form.url = ''
@@ -1204,6 +1217,7 @@ async function startEdit(account) {
     form.device_id = secret.device_id ?? ''
     form.num_file = secret.num_file ?? 5
     form.num_folder = secret.num_folder ?? 0
+    form.song_limit = secret.song_limit ?? 200
     form.repo_id = secret.repo_id ?? ''
     form.repo_pwd = secret.repo_pwd ?? ''
     form.site = secret.site ?? 'ilanzou'
@@ -1284,7 +1298,8 @@ const DRIVER_COLORS = {
   cloudreve_v4: '#6f5bd5',
   terabox: '#06a7ff',
   ilanzou: '#5cb85c',
-  halalcloud_open: '#2f6fed'
+  halalcloud_open: '#2f6fed',
+  netease_music: '#c20c0c'
 }
 const badgeName = (d) => props.driverLabels[d] || d
 const badgeStyle = (d) => {

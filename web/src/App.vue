@@ -241,6 +241,7 @@ const DRIVER_LABELS = {
   cloudreve_v4: 'Cloudreve',
   terabox: 'Terabox',
   ilanzou: '蓝奏优',
+  netease_music: '网易云',
   halalcloud_open: 'halalcloud'
 }
 
@@ -504,6 +505,9 @@ async function addAccount(form) {
     } else if (d === 'virtual') {
       payload.num_file = form.num_file ?? 5
       payload.num_folder = form.num_folder ?? 0
+    } else if (d === 'netease_music') {
+      payload.cookie = form.cookie
+      payload.song_limit = form.song_limit || 200
     } else if (d === 'bunny') {
       payload.bucket = form.bucket
       payload.endpoint = form.endpoint || undefined
@@ -739,6 +743,9 @@ async function editAccount(form) {
     } else if (d === 'virtual') {
       payload.num_file = form.num_file ?? 5
       payload.num_folder = form.num_folder ?? 0
+    } else if (d === 'netease_music') {
+      payload.cookie = form.cookie
+      payload.song_limit = form.song_limit || 200
     } else if (d === 'bunny') {
       payload.bucket = form.bucket
       payload.endpoint = form.endpoint || undefined

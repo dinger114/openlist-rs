@@ -509,6 +509,13 @@ pub enum Credential {
         #[serde(default = "default_s3_root")]
         root_path: String,
     },
+    NeteaseMusic {
+        /// music.163.com 的完整 cookie（必须含 __csrf 与 MUSIC_U）
+        cookie: String,
+        /// 云盘每页拉取条数（对齐上游 SongLimit，默认 200；驱动会按页把云盘拉全）
+        #[serde(default = "default_netease_song_limit")]
+        song_limit: u64,
+    },
 }
 
 fn default_alipan_type() -> String {
@@ -564,6 +571,9 @@ fn default_ftp_root() -> String {
 }
 fn default_virtual_num_file() -> u32 {
     5
+}
+fn default_netease_song_limit() -> u64 {
+    200
 }
 fn default_bunny_region() -> String {
     "us-east-1".to_string()

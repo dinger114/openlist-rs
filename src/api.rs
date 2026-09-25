@@ -72,6 +72,7 @@ pub(crate) fn driver_display_name(kind: &str) -> &'static str {
         "terabox" => "Terabox",
         "ilanzou" => "蓝奏云优创",
         "halalcloud_open" => "halalcloud",
+        "netease_music" => "网易云音乐",
         _ => "网盘",
     }
 }
@@ -130,6 +131,7 @@ pub(crate) fn default_root_fid(driver_kind: &str, cred: &Credential) -> String {
         "baidu_netdisk" => "/".into(),
         "lanzou" => "-1".into(),
         "halalcloud_open" => "/".into(),
+        "netease_music" => "/".into(),
         _ => "0".into(),
     }
 }
@@ -201,6 +203,7 @@ pub(crate) async fn list_accounts(State(st): State<AppState>) -> Json<Value> {
                 Credential::Terabox { .. } => "terabox".into(),
                 Credential::Ilanzou { .. } => "ilanzou".into(),
                 Credential::HalalcloudOpen { .. } => "halalcloud_open".into(),
+                Credential::NeteaseMusic { .. } => "netease_music".into(),
             },
             server_proxy: a.server_proxy,
             enabled: a.enabled,
@@ -365,6 +368,9 @@ pub(crate) struct AddAccountReq {
     server_proxy: bool,
 
     // halalcloud_open：API host 与超时（秒）
+    // netease_music：云盘每页拉取条数（对齐上游 song_limit，默认 200；驱动按页拉全）
+    #[serde(default)]
+    song_limit: Option<u64>,
     #[serde(default)]
     host: Option<String>,
     #[serde(default)]
@@ -1381,6 +1387,17 @@ pub(crate) async fn add_account(
                 },
             )
         }
+        "netease_music" => {
+            let cookie =
+                cookie.ok_or((StatusCode::BAD_REQUEST, "网易云音乐需要 cookie".to_string()))?;
+            (
+                "netease_music",
+                Credential::NeteaseMusic {
+                    cookie,
+                    song_limit: req.song_limit.unwrap_or(200),
+                },
+            )
+        }
         other => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -2013,6 +2030,11 @@ pub(crate) async fn get_account_secret(
             out["host"] = json!(host);
             out["timeout"] = json!(timeout);
             out["root_path"] = json!(root_path);
+        }
+        Credential::NeteaseMusic { cookie, song_limit } => {
+            out["driver"] = json!("netease_music");
+            out["cookie"] = json!(cookie);
+            out["song_limit"] = json!(song_limit);
         }
     }
 
@@ -3556,6 +3578,17 @@ pub(crate) async fn edit_account(
                 },
             )
         }
+        "netease_music" => {
+            let cookie =
+                cookie.ok_or((StatusCode::BAD_REQUEST, "网易云音乐需要 cookie".to_string()))?;
+            (
+                "netease_music",
+                Credential::NeteaseMusic {
+                    cookie,
+                    song_limit: req.song_limit.unwrap_or(200),
+                },
+            )
+        }
         other => {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -3676,6 +3709,7 @@ mod tests {
             ("baidu_netdisk", "/"),
             ("lanzou", "-1"),
             ("halalcloud_open", "/"),
+            ("netease_music", "/"),
         ];
         for (kind, want) in cases {
             assert_eq!(default_root_fid(kind, &c), *want, "driver={kind}");

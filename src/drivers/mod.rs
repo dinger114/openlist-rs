@@ -15,6 +15,7 @@ pub mod kodbox;
 pub mod lanzou;
 pub mod link123;
 pub mod local;
+pub mod netease_music;
 pub mod onedrive;
 pub mod onedrive_app;
 pub mod onedrive_share;
@@ -174,6 +175,7 @@ pub enum Driver {
     Terabox(terabox::Terabox),
     Ilanzou(ilanzou::Ilanzou),
     HalalcloudOpen(halalcloud_open::HalalcloudOpen),
+    NeteaseMusic(netease_music::NeteaseMusic),
 }
 
 impl Driver {
@@ -755,6 +757,9 @@ impl Driver {
                 root_path.clone(),
                 store.clone(),
             )),
+            Credential::NeteaseMusic { cookie, song_limit } => Driver::NeteaseMusic(
+                netease_music::NeteaseMusic::new(cookie.clone(), *song_limit),
+            ),
         };
         // 统一验证凭据（对齐各驱动 Init()）
         match &d {
@@ -805,6 +810,7 @@ impl Driver {
             Driver::Terabox(x) => x.validate().await?,
             Driver::Ilanzou(x) => x.validate().await?,
             Driver::HalalcloudOpen(x) => x.validate().await?,
+            Driver::NeteaseMusic(x) => x.validate().await?,
         }
         Ok(d)
     }
@@ -858,6 +864,7 @@ impl Driver {
             Driver::Terabox(d) => d.list(parent_fid).await,
             Driver::Ilanzou(d) => d.list(parent_fid).await,
             Driver::HalalcloudOpen(d) => d.list(parent_fid).await,
+            Driver::NeteaseMusic(d) => d.list(parent_fid).await,
         }
     }
 
@@ -910,6 +917,7 @@ impl Driver {
             Driver::Terabox(d) => d.download(e).await,
             Driver::Ilanzou(d) => d.download(e).await,
             Driver::HalalcloudOpen(d) => d.download(e).await,
+            Driver::NeteaseMusic(d) => d.download(e).await,
         }
     }
 
@@ -963,6 +971,7 @@ impl Driver {
             Driver::Terabox(d) => d.mkdir(parent_fid, name).await,
             Driver::Ilanzou(d) => d.mkdir(parent_fid, name).await,
             Driver::HalalcloudOpen(d) => d.mkdir(parent_fid, name).await,
+            Driver::NeteaseMusic(d) => d.mkdir(parent_fid, name).await,
         }
     }
 
@@ -1016,6 +1025,7 @@ impl Driver {
             Driver::Terabox(d) => d.rename(parent_fid, e, new_name).await,
             Driver::Ilanzou(d) => d.rename(parent_fid, e, new_name).await,
             Driver::HalalcloudOpen(d) => d.rename(parent_fid, e, new_name).await,
+            Driver::NeteaseMusic(d) => d.rename(parent_fid, e, new_name).await,
         }
     }
 
@@ -1074,6 +1084,7 @@ impl Driver {
             Driver::Terabox(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::Ilanzou(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
             Driver::HalalcloudOpen(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
+            Driver::NeteaseMusic(d) => d.move_entry(parent_fid, e, dst_dir_fid).await,
         }
     }
 
@@ -1127,6 +1138,7 @@ impl Driver {
             Driver::Terabox(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::Ilanzou(d) => d.copy(parent_fid, e, dst_dir_fid).await,
             Driver::HalalcloudOpen(d) => d.copy(parent_fid, e, dst_dir_fid).await,
+            Driver::NeteaseMusic(d) => d.copy(parent_fid, e, dst_dir_fid).await,
         }
     }
 
@@ -1180,6 +1192,7 @@ impl Driver {
             Driver::Terabox(d) => d.remove(parent_fid, e).await,
             Driver::Ilanzou(d) => d.remove(parent_fid, e).await,
             Driver::HalalcloudOpen(d) => d.remove(parent_fid, e).await,
+            Driver::NeteaseMusic(d) => d.remove(parent_fid, e).await,
         }
     }
 
@@ -1234,6 +1247,7 @@ impl Driver {
             Driver::Terabox(d) => d.put(dst_dir_fid, input).await,
             Driver::Ilanzou(d) => d.put(dst_dir_fid, input).await,
             Driver::HalalcloudOpen(d) => d.put(dst_dir_fid, input).await,
+            Driver::NeteaseMusic(d) => d.put(dst_dir_fid, input).await,
         }
     }
 }
