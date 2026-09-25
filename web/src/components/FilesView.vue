@@ -65,6 +65,14 @@
             >
               <Icon name="chevron-right" :size="15" />
             </button>
+            <button
+              v-if="preview._kind === 'markdown'"
+              class="op-icon"
+              :title="mdSource ? '显示渲染结果' : '显示源码'"
+              @click="mdSource = !mdSource"
+            >
+              <Icon :name="mdSource ? 'eye' : 'file-text'" :size="15" />
+            </button>
             <button class="op-icon" title="下载" @click="$emit('download', preview)">
               <Icon name="download" :size="15" />
             </button>
@@ -134,6 +142,26 @@
               </div>
               <pre class="text-view">{{ textContent }}</pre>
             </div>
+          </div>
+
+          <!-- Markdown：默认渲染后展示，可切源码 -->
+          <div v-else-if="preview._kind === 'markdown'" class="text-stage">
+            <div v-if="textLoading" class="state-box">
+              <span class="spin loader-lg"></span>
+              <span>加载中…</span>
+            </div>
+            <div v-else-if="textError" class="state-box">
+              <Icon name="alert" :size="30" />
+              <span>{{ textError }}</span>
+              <a :href="preview._url" target="_blank" class="btn btn-secondary" rel="noopener">在新窗口打开</a>
+            </div>
+            <div v-else-if="mdSource" class="text-editor">
+              <div class="text-gutter" aria-hidden="true">
+                <span v-for="n in textLineCount" :key="n">{{ n }}</span>
+              </div>
+              <pre class="text-view">{{ textContent }}</pre>
+            </div>
+            <div v-else class="md-body" v-html="mdHtml"></div>
           </div>
         </div>
 
@@ -371,7 +399,18 @@
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import Icon from './Icon.vue'
 import FileIcon from './FileIcon.vue'
+import { Marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { kindOf, KIND_ICON, KIND_TITLE, TEXT_PREVIEW_MAX } from '../filekinds.js'
+
+// Markdown 渲染：GFM（表格/删除线/自动链接），产出 HTML 一律过 DOMPurify 再插入
+const md = new Marked({ gfm: true, breaks: false })
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
 
 const props = defineProps({
   accounts: { type: Array, required: true },
@@ -516,10 +555,16 @@ function onKey(ev) {
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
-// ===== 文本类预览：fetch 全文展示（server_proxy 关闭时为跨域直链，失败则降级提示） =====
+// ===== 文本 / Markdown 类预览：fetch 全文展示（server_proxy 关闭时为跨域直链，失败则降级提示） =====
 const textContent = ref(null)
 const textLoading = ref(false)
 const textError = ref('')
+// Markdown 预览：false = 渲染结果（默认），true = 源码
+const mdSource = ref(false)
+const mdHtml = computed(() => {
+  if (!textContent.value) return ''
+  return DOMPurify.sanitize(md.parse(String(textContent.value)))
+})
 const textLineCount = computed(() => {
   const t = textContent.value
   if (!t) return 1
@@ -533,7 +578,8 @@ watch(
     audioPlaying.value = false
     textContent.value = null
     textError.value = ''
-    if (!p || p._kind !== 'text') return
+    mdSource.value = false
+    if (!p || (p._kind !== 'text' && p._kind !== 'markdown')) return
     if (p.size != null && p.size > TEXT_PREVIEW_MAX) {
       textError.value = '文件过大，不支持在线预览'
       return
@@ -1009,6 +1055,113 @@ html.dark .op-icon:hover {
   white-space: pre;
   overflow-wrap: normal;
   tab-size: 4;
+}
+
+/* Markdown 渲染结果（内容由 v-html 插入，嵌套元素必须用 :deep 才吃得到作用域样式） */
+.md-body {
+  max-height: 68vh;
+  overflow: auto;
+  padding: 20px 22px 28px;
+  background: var(--ol-bg);
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--ol-text);
+  word-break: break-word;
+}
+.md-body :deep(h1),
+.md-body :deep(h2),
+.md-body :deep(h3),
+.md-body :deep(h4),
+.md-body :deep(h5),
+.md-body :deep(h6) {
+  margin: 1.2em 0 0.6em;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.md-body :deep(h1) {
+  font-size: 1.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--ol-border);
+}
+.md-body :deep(h2) {
+  font-size: 1.35em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--ol-border);
+}
+.md-body :deep(h3) {
+  font-size: 1.15em;
+}
+.md-body :deep(p),
+.md-body :deep(ul),
+.md-body :deep(ol),
+.md-body :deep(blockquote),
+.md-body :deep(table),
+.md-body :deep(pre) {
+  margin: 0.75em 0;
+}
+.md-body :deep(ul),
+.md-body :deep(ol) {
+  padding-left: 1.6em;
+}
+.md-body :deep(li + li) {
+  margin-top: 0.25em;
+}
+.md-body :deep(a) {
+  color: var(--ol-primary);
+  text-decoration: none;
+}
+.md-body :deep(a:hover) {
+  text-decoration: underline;
+}
+.md-body :deep(code) {
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-family: var(--ol-mono, ui-monospace, Consolas, monospace);
+  font-size: 0.9em;
+  background: var(--ol-panel);
+  border: 1px solid var(--ol-border);
+}
+.md-body :deep(pre) {
+  padding: 12px 14px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--ol-panel);
+  border: 1px solid var(--ol-border);
+}
+.md-body :deep(pre code) {
+  padding: 0;
+  background: none;
+  border: none;
+}
+.md-body :deep(blockquote) {
+  padding: 0.1em 1em;
+  color: var(--ol-text-dim);
+  border-left: 3px solid var(--ol-border-strong);
+}
+.md-body :deep(hr) {
+  height: 1px;
+  border: none;
+  background: var(--ol-border);
+  margin: 1.6em 0;
+}
+.md-body :deep(table) {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+}
+.md-body :deep(th),
+.md-body :deep(td) {
+  padding: 6px 12px;
+  border: 1px solid var(--ol-border);
+}
+.md-body :deep(th) {
+  background: var(--ol-panel);
+  font-weight: 600;
+}
+.md-body :deep(img) {
+  max-width: 100%;
 }
 
 /* ===== 视频页脚（对齐官方 VideoBox） ===== */
