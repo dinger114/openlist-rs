@@ -139,10 +139,11 @@ async fn main() {
     let addr = format!("{}:{}", args.addr, args.port);
     println!("OpenList 运行中: http://{addr}");
     if !is_loopback(&args.addr) {
-        // /d、/p 是免登录下载端点，靠链接签名保护（见 src/sign.rs）。
+        // /d、/p 是免登录下载端点，靠链接签名保护（见 src/sign.rs）；
+        // /dav 走 Basic 鉴权，明文 HTTP 下凭据可被抓包。
         // 绑到非本机地址等于把已配置的网盘暴露给网络可达者，这里显式提醒。
         println!(
-            "提醒: 已监听 {addr}（非仅本机），/d、/p 下载端点对网络可达者开放；\
+            "提醒: 已监听 {addr}（非仅本机），/d、/p 下载端点对网络可达者开放，/dav 为明文 Basic 鉴权；\
              请确认面板密码不是默认值，必要时用防火墙/反代限制来源"
         );
     }

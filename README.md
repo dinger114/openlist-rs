@@ -10,6 +10,7 @@
 - 下载：后端代理流式下载（转发 Range，支持断点续传），文件名正确编码
 - **面板登录鉴权**：用户名密码（argon2id 哈希存储）+ HttpOnly 会话 Cookie（7 天，滑动续期）；登录失败按 IP 限速（连错 5 次锁 60 秒，翻倍上限 15 分钟）
 - 夸克 `__puus` cookie 滚动更新自动回写；123 网盘 401 自动重登；123 列表接口 700ms 限速（对齐 Go 版）
+- **WebDAV 服务**：`/dav` 端点，访达 / 资源管理器 / rclone 可直接挂载（面板账号 Basic 认证；读写按驱动能力，只读存储写操作回 403）
 - **存储启用/禁用**：管理页每张存储卡片附有开关，关闭后该存储从网盘列表隐藏，不影响配置数据
 - **多存储驱动**：夸克 / UC / 夸克Open / 夸克TV / UC TV、123网盘 / 123Open / 123Link、阿里云盘（旧）/ 阿里云盘Open / 阿里分享、115网盘 / 115Open / 115分享、百度网盘、天翼云盘、移动云盘、迅雷、蓝奏云、蓝奏云优创 / 飞鸡盘、Terabox、OneDrive / OneDrive分享 / OneDriveAPP、Google Drive / Google Photo、Dropbox、PikPak / PikPak分享、Yandex.Disk、S3 / BunnyCDN、SFTP、FTP、SMB、WebDAV、AList v3、OpenList 挂载 / OpenList 分享、Seafile、可道云 KodBox、Cloudreve V4、虚拟存储（测试）等
 
@@ -92,6 +93,27 @@ npm run build   # 产物输出 web/dist/，cargo 编译时嵌入
 路径规则：根目录 `/` 下列出各账号文件夹（以备注名命名），进入即浏览对应网盘。响应结构与 OpenList 4.2.6 对齐（HTTP 200 + `{code,message,data}`、`type` 枚举 0未知/1文件夹/2视频/3音频、`raw_url` 为绝对地址）。
 
 NovaTV 接入：设置里添加 OpenList → 服务器地址填本服务地址 → 用户名密码填启动参数里的面板账号。
+
+## WebDAV 服务
+
+把已挂载的存储按 WebDAV 协议暴露给访达 / Windows 资源管理器 / rclone / davfs2 等客户端：
+
+```
+http://<面板地址>/dav
+```
+
+- **鉴权**：面板账号 + 登录密码（HTTP Basic），或面板会话 Cookie；失败按 IP 限速（与面板登录同一套）。`OPTIONS` 免鉴权。
+- **根目录**：与兼容层一致 —— `/dav/` 下列出各存储（以备注名命名）。
+- **支持的方法**：`OPTIONS`、`PROPFIND`（Depth 0/1）、`HEAD`、`GET`（含 Range）、`PUT`、`MKCOL`、`DELETE`、`MOVE`、`COPY`、`LOCK`/`UNLOCK`、`PROPPATCH`（属性只读）。
+- **下载策略**：与面板一致 —— 账号开了「服务器代理」或驱动要求代理时经本服务中转（支持 Range），否则 302 跳真实直链由客户端直连。
+- **已知限制**：
+  - 只读存储（如网易云音乐）可浏览、下载、播放，写操作返回 403；
+  - `Depth: infinity` 按 1 处理（响应带 `X-DAV-Truncated: 1`），单次 PROPFIND 上限 2 万条；
+  - 锁只发/回收 token，不做 `If:` 头强制校验，重启后锁失效；
+  - 无多用户 / 权限 / 配额属性，DAV 属性不持久化（`PROPPATCH` 一律 403）；
+  - 明文 HTTP 下 Basic 凭据可被抓包，建议仅在可信内网使用或反代 HTTPS。
+
+挂载方式：访达「前往 → 连接服务器」、Windows「映射网络驱动器」，命令行 `rclone lsd dav: --webdav-url http://<面板地址>/dav`。面板「设置」页有地址与 rclone 命令的一键复制。
 
 ## API（自有面板接口）
 
