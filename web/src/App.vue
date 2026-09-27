@@ -93,6 +93,8 @@
       @offline="openOffline"
       @batch-move="fsBatchMove"
       @batch-copy="fsBatchCopy"
+      @batch-rename="fsBatchRename"
+      @batch-remove="fsBatchRemove"
     />
 
     <!-- 目标目录选择弹窗（移动/复制用） -->
@@ -138,6 +140,15 @@
         </div>
       </div>
     </div>
+
+    <!-- 批量重命名弹窗（逐行输入 + 查找替换） -->
+    <BatchRenameDialog
+      v-if="renaming"
+      :entries="renameList"
+      :all-names="entries.map((e) => e.name)"
+      @close="renaming = false"
+      @submit="doBatchRename"
+    />
 
     <!-- 离线下载弹窗（任务表由父级持有，弹窗只读） -->
     <OfflineDialog
@@ -197,6 +208,7 @@ import AccountsView from './components/AccountsView.vue'
 import FilesView from './components/FilesView.vue'
 import SettingsView from './components/SettingsView.vue'
 import OfflineDialog from './components/OfflineDialog.vue'
+import BatchRenameDialog from './components/BatchRenameDialog.vue'
 import { kindOf } from './filekinds.js'
 
 const loginViewRef = ref(null)
@@ -1162,6 +1174,56 @@ async function fsRemove(e) {
   } catch (ex) {
     fsErr(ex)
   }
+}
+
+// ----- 批量操作（入口在 FilesView 的常驻批量栏） -----
+
+async function fsBatchRemove(list) {
+  const dirCount = list.filter((e) => e.is_dir).length
+  const extra = dirCount ? `其中 ${dirCount} 个文件夹内的全部内容将一并删除，` : ''
+  if (!confirm(`确认删除选中的 ${list.length} 项？${extra}此操作不可恢复！`)) return
+  try {
+    await api('/api/fs/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir: currentPath(), names: list.map((e) => e.name) })
+    })
+    await refreshCurrent()
+  } catch (ex) {
+    // 服务端是「遇错即中断」：第一个失败项之后的没执行、之前的已生效 → 先刷新让用户看到真实结果
+    await refreshCurrent()
+    fsErr(new Error(`${ex.message || ex}（该批在此项处中断，之前的已生效）`))
+  }
+}
+
+const renameList = ref([])
+const renaming = ref(false)
+
+function fsBatchRename(list) {
+  renameList.value = list
+  renaming.value = true
+}
+
+async function doBatchRename(names) {
+  renaming.value = false
+  const ok = []
+  const bad = []
+  for (const [i, e] of renameList.value.entries()) {
+    const n = names[i]
+    if (n === e.name) continue
+    try {
+      await api('/api/fs/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: entryPath(e), name: n })
+      })
+      ok.push(n)
+    } catch (ex) {
+      bad.push(`${e.name} → ${n}：${ex.message || ex}`)
+    }
+  }
+  await refreshCurrent()
+  if (bad.length) fsErr(new Error(`${ok.length} 项已重命名，${bad.length} 项失败：${bad.join('；')}`))
 }
 
 // ----- 目标目录选择弹窗（移动/复制共用；批量时装多个条目） -----
