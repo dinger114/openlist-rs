@@ -73,6 +73,7 @@
       :can-write="canWrite"
       :offline-tools="offlineTools"
       :offline-running="offlineRunning"
+      :search="search"
       v-model:view-mode="viewMode"
       @go-accounts="view = 'accounts'"
       @go-home="goHome"
@@ -95,6 +96,10 @@
       @batch-copy="fsBatchCopy"
       @batch-rename="fsBatchRename"
       @batch-remove="fsBatchRemove"
+      @search="runSearch"
+      @search-refresh="runSearch()"
+      @search-close="closeSearch"
+      @open-path="openPath"
     />
 
     <!-- 目标目录选择弹窗（移动/复制用） -->
@@ -145,7 +150,7 @@
     <BatchRenameDialog
       v-if="renaming"
       :entries="renameList"
-      :all-names="entries.map((e) => e.name)"
+      :siblings="renameSiblings"
       @close="renaming = false"
       @submit="doBatchRename"
     />
@@ -882,6 +887,7 @@ async function delAccount(a) {
 
 function onSwitchAccount(id) {
   view.value = 'files'
+  closeSearch()
   currentId.value = id
   const acc = accounts.value.find((a) => a.id === id)
   crumbs.value = [{ fid: '0', name: acc?.name || '根目录' }]
@@ -895,6 +901,7 @@ function onSwitchAccount(id) {
 function goHome() {
   preview.value = null
   view.value = 'files'
+  closeSearch()
   currentId.value = ''
   entries.value = []
   crumbs.value = [{ fid: '0', name: '网盘' }]
@@ -905,6 +912,17 @@ function goHome() {
 async function refreshCurrent() {
   if (!currentId.value) {
     await loadAccounts()
+    return
+  }
+  // 搜索态下刷新 = 重跑同一次搜索（走列表缓存，代价小）
+  if (search.value.active) {
+    if (refreshing.value) return
+    refreshing.value = true
+    try {
+      await runSearch()
+    } finally {
+      refreshing.value = false
+    }
     return
   }
   if (refreshing.value) return
@@ -936,11 +954,13 @@ async function listFiles(fid, refresh = false) {
 }
 
 function openDir(e) {
+  closeSearch()
   crumbs.value.push({ fid: e.fid, name: e.name })
   listFiles(e.fid)
 }
 
 function goto(i) {
+  closeSearch()
   preview.value = null
   crumbs.value = crumbs.value.slice(0, i + 1)
   listFiles(crumbs.value[i].fid)
@@ -1017,7 +1037,24 @@ function currentPath() {
 }
 
 function entryPath(e) {
-  return `${currentPath().replace(/\/$/, '')}/${e.name}`
+  // 搜索结果自带虚拟路径（条目可能在别的目录），普通列表按当前目录拼
+  return e.path || `${currentPath().replace(/\/$/, '')}/${e.name}`
+}
+
+/// 条目所在目录：搜索结果用服务端给的 parent_path，普通列表即当前目录
+function parentOf(e) {
+  return e.parent_path || currentPath().replace(/\/$/, '')
+}
+
+/// 按所在目录分组（批量操作要一组一次请求：兼容层写端点收 {dir, names[]}）
+function groupByDir(list) {
+  const m = new Map()
+  for (const e of list) {
+    const d = parentOf(e)
+    if (!m.has(d)) m.set(d, [])
+    m.get(d).push(e)
+  }
+  return m
 }
 
 function fsErr(e) {
@@ -1176,18 +1213,109 @@ async function fsRemove(e) {
   }
 }
 
+// ----- 目录内搜索（结果替换列表区；批量操作按父目录分组提交） -----
+const search = ref({
+  active: false,
+  q: '',
+  depth: 1,
+  scope: 'file',
+  loading: false,
+  entries: [],
+  path: '',
+  scannedDirs: 0,
+  truncated: false,
+  failedDirs: 0
+})
+
+/// payload 省略时沿用上次的关键词/深度（「重新搜索」与操作后刷新走这条）
+async function runSearch(payload) {
+  if (!currentId.value) return
+  const q = (payload?.q ?? search.value.q ?? '').trim()
+  if (!q) return
+  const depth = payload?.depth ?? search.value.depth
+  const scope = payload?.scope ?? search.value.scope
+  search.value = { ...search.value, active: true, q, depth, scope, loading: true }
+  err.value = ''
+  try {
+    const b = await api(
+      `/api/search?path=${encodeURIComponent(currentPath())}&q=${encodeURIComponent(q)}&depth=${depth}&scope=${scope}`
+    )
+    search.value = {
+      ...search.value,
+      loading: false,
+      entries: b.entries || [],
+      path: b.path || currentPath(),
+      scannedDirs: b.scanned_dirs || 0,
+      truncated: !!b.truncated,
+      failedDirs: b.failed_dirs || 0
+    }
+  } catch (e) {
+    search.value = { ...search.value, loading: false, entries: [] }
+    fsErr(e)
+  }
+}
+
+function closeSearch() {
+  if (!search.value.active) return
+  search.value = { ...search.value, active: false, entries: [] }
+}
+
+/// 按虚拟路径跳转（搜索结果里点目录 / 点「打开所在目录」）：逐级列表把 fid 找回来
+async function openPath(path) {
+  const segs = String(path || '').split('/').filter(Boolean)
+  if (!segs.length) return
+  const acc = accounts.value.find((a) => a.name === segs[0])
+  if (!acc) {
+    fsErr(new Error(`找不到存储：${segs[0]}`))
+    return
+  }
+  const next = [{ fid: '0', name: acc.name }]
+  try {
+    for (let i = 1; i < segs.length; i++) {
+      const parentFid = next[next.length - 1].fid
+      const b = await api(
+        `/api/files?account=${encodeURIComponent(acc.id)}&fid=${encodeURIComponent(parentFid)}`
+      )
+      const hit = (b.entries || []).find((e) => e.is_dir && e.name === segs[i])
+      if (!hit) {
+        fsErr(new Error(`路径已不存在：${segs.slice(0, i + 1).join('/')}`))
+        return
+      }
+      next.push({ fid: hit.fid, name: hit.name })
+    }
+  } catch (e) {
+    fsErr(e)
+    return
+  }
+  const accChanged = currentId.value !== acc.id
+  closeSearch()
+  preview.value = null
+  currentId.value = acc.id
+  crumbs.value = next
+  await listFiles(next[next.length - 1].fid)
+  if (accChanged) {
+    loadOfflineTools()
+    loadOfflineTasks()
+  }
+}
+
 // ----- 批量操作（入口在 FilesView 的常驻批量栏） -----
 
 async function fsBatchRemove(list) {
   const dirCount = list.filter((e) => e.is_dir).length
   const extra = dirCount ? `其中 ${dirCount} 个文件夹内的全部内容将一并删除，` : ''
-  if (!confirm(`确认删除选中的 ${list.length} 项？${extra}此操作不可恢复！`)) return
+  const groups = groupByDir(list)
+  const where = groups.size > 1 ? `（分布在 ${groups.size} 个目录）` : ''
+  if (!confirm(`确认删除选中的 ${list.length} 项${where}？${extra}此操作不可恢复！`)) return
   try {
-    await api('/api/fs/remove', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dir: currentPath(), names: list.map((e) => e.name) })
-    })
+    // 搜索结果可能跨目录：按所在目录分组，一组一次请求
+    for (const [dir, items] of groups) {
+      await api('/api/fs/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dir, names: items.map((e) => e.name) })
+      })
+    }
     await refreshCurrent()
   } catch (ex) {
     // 服务端是「遇错即中断」：第一个失败项之后的没执行、之前的已生效 → 先刷新让用户看到真实结果
@@ -1203,6 +1331,15 @@ function fsBatchRename(list) {
   renameList.value = list
   renaming.value = true
 }
+
+// 每行条目所在目录的全部名字（下标与 renameList 对齐）：搜索态下来自结果集，普通列表即当前目录
+const renameSiblings = computed(() =>
+  renameList.value.map((e) => {
+    const dir = parentOf(e)
+    const pool = search.value.active ? search.value.entries : entries.value
+    return pool.filter((x) => parentOf(x) === dir).map((x) => x.name)
+  })
+)
 
 async function doBatchRename(names) {
   renaming.value = false
@@ -1229,12 +1366,15 @@ async function doBatchRename(names) {
 // ----- 目标目录选择弹窗（移动/复制共用；批量时装多个条目） -----
 const picker = ref({ open: false, mode: 'move', crumbs: [], dirs: [], loading: false, busy: false, entries: [] })
 
-// 目标 = 当前目录，或落在某个被选中文件夹的子树内 → 拒绝（弹窗是模态的，期间目录不会变）
+// 目标 = 某个源条目所在目录，或落在某个被选中文件夹的子树内 → 拒绝
 const pickerBlocked = computed(() => {
   const p = picker.value
   if (!p.open) return ''
   const dst = '/' + p.crumbs.map((c) => c.name).join('/')
-  if (dst === currentPath()) return '目标就是当前目录，换一个吧'
+  const srcDirs = [...new Set(p.entries.map(parentOf))]
+  if (srcDirs.includes(dst)) {
+    return srcDirs.length === 1 ? '目标就是当前目录，换一个吧' : '目标就是这些条目的所在目录，换一个吧'
+  }
   const subs = p.entries.filter((e) => e.is_dir).map((e) => entryPath(e))
   if (subs.some((s) => dst === s || dst.startsWith(s + '/'))) return '不能把文件夹移动/复制到它自己里面'
   return ''
@@ -1299,15 +1439,21 @@ async function pickerConfirm() {
   const endpoint = p.mode === 'move' ? '/api/fs/move' : '/api/fs/copy'
   p.busy = true
   try {
-    await api(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ src_dir: currentPath(), dst_dir: dst, names: p.entries.map((x) => x.name) })
-    })
+    // 搜索结果可能跨目录：按源目录分组，一组一次请求
+    for (const [dir, items] of groupByDir(p.entries)) {
+      await api(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ src_dir: dir, dst_dir: dst, names: items.map((x) => x.name) })
+      })
+    }
     p.open = false
-    await listFiles(crumbs.value[crumbs.value.length - 1].fid, true)
+    await refreshCurrent()
   } catch (e) {
-    fsErr(e)
+    // 遇错即中断：之前的组已生效 → 先刷新再报错
+    p.open = false
+    await refreshCurrent()
+    fsErr(new Error(`${e.message || e}（该批在此项处中断，之前的已生效）`))
   } finally {
     p.busy = false
   }

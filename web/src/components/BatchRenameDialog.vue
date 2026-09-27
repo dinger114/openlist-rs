@@ -41,8 +41,9 @@ import Icon from './Icon.vue'
 const props = defineProps({
   // 选中的条目（含 name / key / is_dir）
   entries: { type: Array, required: true },
-  // 当前目录全部名字，用于查重
-  allNames: { type: Array, default: () => [] }
+  // 每行条目所在目录的全部名字（下标与 entries 对齐），用于查重
+  // （搜索结果可能跨目录，所以查重必须按各自目录来，不能用一个总表）
+  siblings: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['close', 'submit'])
 
@@ -68,8 +69,11 @@ const err = computed(() => {
   if (names.value.some((n) => !n.trim())) return '名称不能为空'
   if (names.value.some((n) => n.includes('/'))) return '名称不能包含 /'
   if (new Set(names.value.map((n) => n.trim())).size !== names.value.length) return '批内有重名'
-  const others = props.allNames.filter((n) => !props.entries.some((e) => e.name === n))
-  if (names.value.some((n) => others.includes(n.trim()))) return '与目录内已有文件重名'
+  const others = names.value.some((n, i) => {
+    const sibs = (props.siblings[i] || []).filter((x) => !props.entries.some((e) => e.name === x))
+    return sibs.includes(n.trim())
+  })
+  if (others) return '与所在目录已有文件重名'
   return ''
 })
 const changed = computed(() => names.value.some((n, i) => n.trim() !== props.entries[i].name))

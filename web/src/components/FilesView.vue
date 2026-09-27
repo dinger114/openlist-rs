@@ -30,6 +30,21 @@
             </template>
           </template>
         </nav>
+        <form v-if="currentId && !preview" class="search-box" @submit.prevent="submitSearch">
+          <Icon name="search" :size="15" />
+          <input v-model="searchQ" class="search-input" placeholder="在此目录下搜文件名…" />
+          <select v-model.number="searchDepth" class="search-depth" title="往下搜几层">
+            <option :value="1">1 层</option>
+            <option :value="2">2 层</option>
+            <option :value="3">3 层</option>
+            <option :value="32">全部</option>
+          </select>
+          <label class="search-scope" title="结果里也包含文件夹">
+            <input type="checkbox" v-model="searchDirs" />
+            <span>含文件夹</span>
+          </label>
+          <button class="btn btn-sm btn-secondary" type="submit" :disabled="!searchQ.trim()">搜索</button>
+        </form>
         <div v-if="!preview" class="view-toggle" role="group" aria-label="视图切换">
           <button
             :class="{ active: viewMode === 'list' }"
@@ -53,6 +68,17 @@
         <button class="btn btn-sm btn-secondary" :disabled="!selectedCount" @click="$emit('batch-rename', picked)">重命名</button>
         <button class="btn btn-sm btn-danger" :disabled="!selectedCount" @click="$emit('batch-remove', picked)">删除</button>
         <button v-if="selectedCount" class="btn btn-sm btn-ghost" @click="clearSelection">清除选择</button>
+      </div>
+
+      <!-- 搜索结果头：搜索态下替代「当前目录」语义 -->
+      <div v-if="search.active && !preview" class="search-head">
+        <span class="search-sum">
+          搜索「{{ search.q }}」· 命中 {{ (search.entries || []).length }} 项 · 已扫 {{ search.scannedDirs }} 个目录
+        </span>
+        <span v-if="search.truncated" class="search-warn">已达扫描/结果上限，结果可能不全</span>
+        <span v-if="search.failedDirs" class="search-warn">{{ search.failedDirs }} 个目录读取失败</span>
+        <button class="btn btn-sm btn-ghost" :disabled="search.loading" @click="$emit('search-refresh')">重新搜索</button>
+        <button class="btn btn-sm btn-secondary" @click="$emit('search-close')">返回目录</button>
       </div>
 
       <div v-if="err" class="alert alert-error">{{ err }}</div>
@@ -217,14 +243,23 @@
       </template>
 
       <template v-else>
-        <!-- 加载中（进入网盘后） -->
-        <div v-if="currentId && loading" class="obj-box state-box">
+        <!-- 加载中（进入网盘后 / 搜索中） -->
+        <div v-if="currentId && (loading || search.loading)" class="obj-box state-box">
           <span class="spin loader-lg"></span>
-          <span>加载中…</span>
+          <span>{{ search.loading ? '搜索中…' : '加载中…' }}</span>
+        </div>
+
+        <!-- 搜索无结果 -->
+        <div
+          v-else-if="search.active && !(search.entries || []).length"
+          class="obj-box state-box"
+        >
+          <Icon name="search" :size="34" />
+          <span>没有匹配的文件</span>
         </div>
 
         <!-- 空目录 -->
-        <div v-else-if="currentId && entries.length === 0" class="obj-box state-box">
+        <div v-else-if="currentId && !search.active && entries.length === 0" class="obj-box state-box">
           <Icon name="inbox" :size="34" />
           <span>此文件夹为空</span>
         </div>
@@ -257,6 +292,7 @@
                   <FileIcon :name="e.name" :is-dir="e.is_dir" />
                 </span>
                 <span class="fname-text">{{ e.name }}</span>
+                <span v-if="e.rel" class="search-rel" :title="e.parent_path">{{ e.rel }}/</span>
               </span>
               <span class="li-size">{{ e.is_dir || e.is_drive ? '-' : fmtSize(e.size) }}</span>
               <span class="li-date">{{ e.updated_at ? fmtDate(e.updated_at) : '-' }}</span>
@@ -274,6 +310,9 @@
                     <Icon name="download" :size="14" />
                   </button>
                   <template v-if="canWrite">
+                    <button v-if="search.active" class="op-icon" title="打开所在目录" @click.stop="$emit('open-path', e.parent_path)">
+                      <Icon name="folder" :size="14" />
+                    </button>
                     <button class="op-icon" title="重命名" @click.stop="$emit('rename', e)">
                       <Icon name="edit" :size="14" />
                     </button>
@@ -310,6 +349,7 @@
                   <FileIcon :name="e.name" :is-dir="e.is_dir" />
                 </span>
                 <span class="fname-text">{{ e.name }}</span>
+                <span v-if="e.rel" class="search-rel" :title="e.parent_path">{{ e.rel }}/</span>
               </div>
               <div class="mobile-meta">
                 <span>{{ e.is_dir || e.is_drive ? '-' : fmtSize(e.size) }}</span>
@@ -328,6 +368,9 @@
                   <Icon name="download" :size="14" />
                 </button>
                 <template v-if="canWrite">
+                  <button v-if="search.active" class="op-icon" title="打开所在目录" @click.stop="$emit('open-path', e.parent_path)">
+                    <Icon name="folder" :size="14" />
+                  </button>
                   <button class="op-icon" title="重命名" @click.stop="$emit('rename', e)">
                     <Icon name="edit" :size="14" />
                   </button>
@@ -363,6 +406,7 @@
                 <FileIcon :name="e.name" :is-dir="e.is_dir" />
               </div>
               <div class="grid-name" :title="e.name">{{ e.name }}</div>
+              <div v-if="e.rel" class="grid-rel" :title="e.parent_path">{{ e.rel }}/</div>
               <div class="grid-hover-actions" v-if="!e.is_drive">
                 <button
                   v-if="!e.is_dir && kindOf(e.name, e.is_dir)"
@@ -376,6 +420,9 @@
                   <Icon name="download" :size="13" />
                 </button>
                 <template v-if="canWrite">
+                  <button v-if="search.active" class="op-icon" title="打开所在目录" @click.stop="$emit('open-path', e.parent_path)">
+                    <Icon name="folder" :size="13" />
+                  </button>
                   <button class="op-icon" title="删除" @click.stop="$emit('remove', e)">
                     <Icon name="trash" :size="13" />
                   </button>
@@ -466,17 +513,41 @@ const props = defineProps({
   // 当前存储支持的原生离线下载工具（空 = 不显示入口，来自 App.vue::loadOfflineTools）
   offlineTools: { type: Array, default: () => [] },
   // 进行中的离线任务数（> 0 时 FAB 显示徽标）
-  offlineRunning: { type: Number, default: 0 }
+  offlineRunning: { type: Number, default: 0 },
+  // 目录内搜索状态（App.vue 持有；active 时列表区渲染搜索结果）
+  search: {
+    type: Object,
+    default: () => ({
+      active: false,
+      q: '',
+      depth: 1,
+      loading: false,
+      entries: [],
+      path: '',
+      scannedDirs: 0,
+      truncated: false,
+      failedDirs: 0
+    })
+  }
 })
 const emit = defineEmits([
   'go-accounts', 'go-home', 'open-account', 'switch-account', 'goto', 'refresh', 'update:view-mode',
   'open-dir', 'preview', 'close-preview', 'download',
   'mkdir', 'rename', 'move', 'copy', 'remove', 'upload', 'offline',
-  'batch-move', 'batch-copy', 'batch-rename', 'batch-remove'
+  'batch-move', 'batch-copy', 'batch-rename', 'batch-remove',
+  'search', 'search-close', 'search-refresh', 'open-path'
 ])
 
-// 统一数据源：根目录（未选网盘）时把网盘映射为“文件夹”行，进入网盘后为文件条目
+// 统一数据源：根目录（未选网盘）时把网盘映射为“文件夹”行，进入网盘后为文件条目；
+// 搜索态则直接渲染结果（key 用虚拟路径，跨目录唯一；rel = 相对搜索根的所在目录）
 const displayEntries = computed(() => {
+  if (props.search.active) {
+    return (props.search.entries || []).map((e) => ({
+      ...e,
+      key: e.path || e.fid,
+      rel: relPath(e.parent_path)
+    }))
+  }
   if (props.currentId) {
     return props.entries.map((e) => ({ ...e, key: e.fid }))
   }
@@ -493,6 +564,27 @@ const displayEntries = computed(() => {
       updated_at: null
     }))
 })
+
+// ===== 目录内搜索 =====
+const searchQ = ref('')
+const searchDepth = ref(1)
+const searchDirs = ref(false)
+
+/// 命中项所在目录（相对搜索根）：/搜索盘/B1 去掉根 /搜索盘 后是 B1，根目录显示「当前目录」
+function relPath(parent) {
+  if (!parent) return ''
+  const root = props.search.path || ''
+  let rel = parent
+  if (root && parent.startsWith(root)) rel = parent.slice(root.length)
+  rel = rel.replace(/^\/+/, '')
+  return rel || '当前目录'
+}
+
+function submitSearch() {
+  const q = searchQ.value.trim()
+  if (!q) return
+  emit('search', { q, depth: searchDepth.value, scope: searchDirs.value ? 'all' : 'file' })
+}
 
 // ===== 批量选择 =====
 // 存 displayEntries 的 key（进账号后即 fid；根目录是 'drive-<id>'）
@@ -527,9 +619,10 @@ function toggleAll() {
 function invertSelect() {
   selected.value = new Set(selectableEntries.value.filter((e) => !selected.value.has(e.key)).map((e) => e.key))
 }
-// 换目录 / 换账号 / 列表刷新后清空选择
+// 换目录 / 换账号 / 列表刷新 / 搜索结果变化后清空选择
 watch(() => props.currentId, clearSelection)
 watch(() => props.entries, clearSelection)
+watch(() => props.search.entries, clearSelection)
 
 // ===== 外部播放器（对齐官方 video_box.tsx players 列表，图标来自官方 images） =====
 const PLAYERS = [
@@ -590,6 +683,11 @@ function openExternal(p) {
 }
 
 function rowActivate(e) {
+  // 搜索态：命中目录在别的层级，面包屑对不上，直接按虚拟路径跳过去
+  if (props.search.active && e.is_dir) {
+    emit('open-path', e.path)
+    return
+  }
   if (e.is_drive) emit('open-account', e.id)
   else if (e.is_dir) emit('open-dir', e)
   else if (kindOf(e.name, e.is_dir)) emit('preview', e)
@@ -767,6 +865,82 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+/* ===== 目录内搜索（面包屑行右侧） ===== */
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 3px 6px 3px 8px;
+  border-radius: 10px;
+  background: var(--ol-panel);
+  border: 1px solid var(--ol-border);
+  color: var(--ol-text-dim);
+}
+.search-input {
+  width: 170px;
+  border: none;
+  background: transparent;
+  color: var(--ol-text);
+  font-size: 13px;
+  outline: none;
+}
+.search-depth {
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--ol-border);
+  background: var(--ol-panel);
+  color: var(--ol-text);
+}
+.search-scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* 搜索结果头 */
+.search-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--ol-panel);
+  border: 1px solid var(--ol-border);
+}
+.search-sum {
+  font-size: 13px;
+  color: var(--ol-text-dim);
+  margin-right: auto;
+}
+.search-warn {
+  font-size: 12px;
+  color: var(--ol-danger);
+}
+/* 命中项所在目录（相对搜索根） */
+.search-rel {
+  font-size: 12px;
+  color: var(--ol-text-dim);
+  margin-left: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+.grid-rel {
+  font-size: 11px;
+  color: var(--ol-text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* ===== 批量操作栏（面包屑下方常驻，文档流内） ===== */
 .batch-bar {
@@ -1576,6 +1750,16 @@ html.dark .fab-item:hover {
 @media (max-width: 768px) {
   .page {
     padding: 4px 12px 40px;
+  }
+  /* 搜索框占满一行（面包屑上方换行），输入框吃掉剩余宽度 */
+  .search-box {
+    width: 100%;
+    margin-left: 0;
+  }
+  .search-input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
   }
   /* 批量栏按钮多：换行，不横滚 */
   .batch-bar {
