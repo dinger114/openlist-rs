@@ -91,13 +91,15 @@
       @remove="fsRemove"
       @upload="fsUpload"
       @offline="openOffline"
+      @batch-move="fsBatchMove"
+      @batch-copy="fsBatchCopy"
     />
 
     <!-- 目标目录选择弹窗（移动/复制用） -->
     <div v-if="picker.open" class="picker-mask" @click.self="picker.open = false">
       <div class="picker card">
         <div class="picker-head">
-          <span>{{ picker.mode === 'move' ? '移动到' : '复制到' }}</span>
+          <span>{{ picker.mode === 'move' ? '移动' : '复制' }} {{ picker.entries.length }} 项到</span>
           <button class="btn-icon btn-ghost" @click="picker.open = false">
             <Icon name="close" :size="16" />
           </button>
@@ -128,8 +130,9 @@
           </button>
         </div>
         <div class="picker-foot">
+          <span v-if="pickerBlocked" class="picker-hint">{{ pickerBlocked }}</span>
           <button class="btn btn-secondary" @click="picker.open = false">取消</button>
-          <button class="btn" :disabled="picker.busy" @click="pickerConfirm">
+          <button class="btn" :disabled="picker.busy || !!pickerBlocked" @click="pickerConfirm">
             {{ picker.mode === 'move' ? '移动到此处' : '复制到此处' }}
           </button>
         </div>
@@ -1161,17 +1164,47 @@ async function fsRemove(e) {
   }
 }
 
-// ----- 目标目录选择弹窗（移动/复制共用） -----
-const picker = ref({ open: false, mode: 'move', crumbs: [], dirs: [], loading: false, busy: false, entry: null })
+// ----- 目标目录选择弹窗（移动/复制共用；批量时装多个条目） -----
+const picker = ref({ open: false, mode: 'move', crumbs: [], dirs: [], loading: false, busy: false, entries: [] })
 
-function fsMove(e) {
-  picker.value = { open: true, mode: 'move', crumbs: [{ fid: '0', name: accounts.value.find((a) => a.id === currentId.value)?.name || '' }], dirs: [], loading: false, busy: false, entry: e }
+// 目标 = 当前目录，或落在某个被选中文件夹的子树内 → 拒绝（弹窗是模态的，期间目录不会变）
+const pickerBlocked = computed(() => {
+  const p = picker.value
+  if (!p.open) return ''
+  const dst = '/' + p.crumbs.map((c) => c.name).join('/')
+  if (dst === currentPath()) return '目标就是当前目录，换一个吧'
+  const subs = p.entries.filter((e) => e.is_dir).map((e) => entryPath(e))
+  if (subs.some((s) => dst === s || dst.startsWith(s + '/'))) return '不能把文件夹移动/复制到它自己里面'
+  return ''
+})
+
+function openPicker(mode, list) {
+  picker.value = {
+    open: true,
+    mode,
+    crumbs: [{ fid: '0', name: accounts.value.find((a) => a.id === currentId.value)?.name || '' }],
+    dirs: [],
+    loading: false,
+    busy: false,
+    entries: list
+  }
   pickerLoad('0')
 }
 
+function fsMove(e) {
+  openPicker('move', [e])
+}
+
 function fsCopy(e) {
-  picker.value = { open: true, mode: 'copy', crumbs: [{ fid: '0', name: accounts.value.find((a) => a.id === currentId.value)?.name || '' }], dirs: [], loading: false, busy: false, entry: e }
-  pickerLoad('0')
+  openPicker('copy', [e])
+}
+
+function fsBatchMove(list) {
+  openPicker('move', list)
+}
+
+function fsBatchCopy(list) {
+  openPicker('copy', list)
 }
 
 async function pickerLoad(fid) {
@@ -1207,7 +1240,7 @@ async function pickerConfirm() {
     await api(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ src_dir: currentPath(), dst_dir: dst, names: [p.entry.name] })
+      body: JSON.stringify({ src_dir: currentPath(), dst_dir: dst, names: p.entries.map((x) => x.name) })
     })
     p.open = false
     await listFiles(crumbs.value[crumbs.value.length - 1].fid, true)
@@ -1498,6 +1531,12 @@ onMounted(async () => {
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--ol-border);
+}
+.picker-hint {
+  margin-right: auto;
+  align-self: center;
+  font-size: 12px;
+  color: var(--ol-danger);
 }
 .loader-sm {
   width: 18px;
