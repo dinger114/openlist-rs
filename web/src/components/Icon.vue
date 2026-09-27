@@ -26,6 +26,10 @@
     <template v-else-if="name === 'download'">
       <path d="M12 3v12" /><polyline points="7 10 12 15 17 10" /><path d="M4 19h16" />
     </template>
+    <template v-else-if="name === 'cloud-download'">
+      <path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29" />
+      <polyline points="8 17 12 21 16 17" /><line x1="12" y1="12" x2="12" y2="21" />
+    </template>
     <template v-else-if="name === 'play'">
       <polygon points="6 3 20 12 6 21 6 3" />
     </template>

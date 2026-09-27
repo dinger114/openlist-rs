@@ -71,6 +71,8 @@
       :err="err"
       :driver-labels="DRIVER_LABELS"
       :can-write="canWrite"
+      :offline-tools="offlineTools"
+      :offline-running="offlineRunning"
       v-model:view-mode="viewMode"
       @go-accounts="view = 'accounts'"
       @go-home="goHome"
@@ -88,6 +90,7 @@
       @copy="fsCopy"
       @remove="fsRemove"
       @upload="fsUpload"
+      @offline="openOffline"
     />
 
     <!-- 目标目录选择弹窗（移动/复制用） -->
@@ -133,6 +136,20 @@
       </div>
     </div>
 
+    <!-- 离线下载弹窗（任务表由父级持有，弹窗只读） -->
+    <OfflineDialog
+      v-if="offline.open"
+      :path="offline.path"
+      :tools="offlineTools"
+      :tasks="offlineTasks"
+      :busy="offlineBusy"
+      :err="offlineErr"
+      :reset-key="offlineResetKey"
+      @close="closeOffline"
+      @submit="offlineSubmit"
+      @cancel="offlineCancel"
+    />
+
     <!-- 上传任务面板 -->
     <div v-if="uploads.length" class="upload-panel card">
       <div class="upload-head">
@@ -169,13 +186,14 @@
 </template>
 
 <script setup>
-import { ref, computed, reactive, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import Icon from './components/Icon.vue'
 import Logo from './components/Logo.vue'
 import LoginView from './components/LoginView.vue'
 import AccountsView from './components/AccountsView.vue'
 import FilesView from './components/FilesView.vue'
 import SettingsView from './components/SettingsView.vue'
+import OfflineDialog from './components/OfflineDialog.vue'
 import { kindOf } from './filekinds.js'
 
 const loginViewRef = ref(null)
@@ -853,6 +871,9 @@ function onSwitchAccount(id) {
   const acc = accounts.value.find((a) => a.id === id)
   crumbs.value = [{ fid: '0', name: acc?.name || '根目录' }]
   listFiles('0')
+  // 离线下载：工具集是账号级属性，取一次；顺带拉一次任务表（刷新页面后仍在跑的任务靠它显示徽标）
+  loadOfflineTools()
+  loadOfflineTasks()
 }
 
 // 返回网盘列表首页：不自动加载任何网盘的内容
@@ -862,6 +883,7 @@ function goHome() {
   currentId.value = ''
   entries.value = []
   crumbs.value = [{ fid: '0', name: '网盘' }]
+  offlineTools.value = []
 }
 
 // 刷新：强制向网盘重新拉取当前目录（跳过服务端缓存），刷新按钮转圈反馈
@@ -986,6 +1008,114 @@ function entryPath(e) {
 function fsErr(e) {
   err.value = e.message || String(e)
 }
+
+// ============================================================
+// 原生离线下载（供应商侧任务；面板接口见 src/api.rs::offline_*）
+// ============================================================
+
+// 当前存储支持的原生离线下载工具（空 = 不显示入口；由服务端按路径判定，前端不硬编码驱动名）
+const offlineTools = ref([])
+// 任务表：父级持有唯一一份，弹窗只读它；FAB 徽标用的进行中数量也由它算
+const offlineTasks = ref([])
+const offline = ref({ open: false, path: '' })
+const offlineBusy = ref(false)
+const offlineErr = ref('')
+const offlineResetKey = ref(0)
+const offlineRunning = computed(() => offlineTasks.value.filter((t) => t.state === 'running').length)
+// 已触发过「刷新目录」的终态任务 id：任务记录会长期留在表里（上限 200），
+// 没有这个集合就会每 3 秒 refreshCurrent() 一次
+const offlineHandled = new Set()
+let offlineTimer = null
+
+// 工具集是账号级属性（同一个驱动换个目录答案不变），进账号时取一次即可
+async function loadOfflineTools() {
+  offlineTools.value = []
+  if (!currentId.value) return
+  try {
+    const b = await api(`/api/offline/tools?path=${encodeURIComponent(currentPath())}`)
+    offlineTools.value = b.tools || []
+  } catch {
+    // 取失败按「不显示入口」处理（fail-closed），不弹错误打扰用户
+    offlineTools.value = []
+  }
+}
+
+async function loadOfflineTasks() {
+  try {
+    const b = await api('/api/offline/tasks')
+    const tasks = b.tasks || []
+    // 有任务刚转完成 → 刷一次当前目录（服务端已失效该目录缓存，这里是面板侧兜底）
+    for (const t of tasks) {
+      if (t.state === 'succeeded' && !offlineHandled.has(t.id)) {
+        offlineHandled.add(t.id)
+        if (currentId.value) await refreshCurrent()
+      }
+    }
+    offlineTasks.value = tasks
+  } catch {
+    /* 拉失败不清表，下一轮再试 */
+  }
+  syncOfflinePolling()
+}
+
+// 只在「弹窗开着」或「有进行中任务」时轮询；两者都不成立就停掉定时器（不空转）
+function syncOfflinePolling() {
+  const need = offline.value.open || offlineRunning.value > 0
+  if (need && !offlineTimer) {
+    offlineTimer = setInterval(loadOfflineTasks, 3000)
+  } else if (!need && offlineTimer) {
+    clearInterval(offlineTimer)
+    offlineTimer = null
+  }
+}
+
+function openOffline() {
+  offlineErr.value = ''
+  // 目标目录取「打开弹窗时所在目录」，避免弹窗期间路径漂移
+  offline.value = { open: true, path: currentPath() }
+  loadOfflineTasks()
+}
+
+function closeOffline() {
+  offline.value = { open: false, path: '' }
+  syncOfflinePolling()
+}
+
+async function offlineSubmit({ urls, tool }) {
+  offlineErr.value = ''
+  offlineBusy.value = true
+  try {
+    await api('/api/offline/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: offline.value.path, urls, tool })
+    })
+    offlineResetKey.value += 1
+    await loadOfflineTasks() // 提交后立刻拉一次，不等 3 秒
+  } catch (e) {
+    offlineErr.value = e.message || String(e)
+  } finally {
+    offlineBusy.value = false
+  }
+}
+
+async function offlineCancel(id) {
+  offlineErr.value = ''
+  try {
+    await api('/api/offline/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id] })
+    })
+    await loadOfflineTasks()
+  } catch (e) {
+    offlineErr.value = e.message || String(e)
+  }
+}
+
+onUnmounted(() => {
+  if (offlineTimer) clearInterval(offlineTimer)
+})
 
 async function fsMkdir() {
   const name = prompt('新建文件夹名称：')

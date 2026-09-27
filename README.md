@@ -118,6 +118,17 @@ http://<面板地址>/dav
 
 挂载方式：访达「前往 → 连接服务器」、Windows「映射网络驱动器」，命令行 `rclone lsd dav: --webdav-url http://<面板地址>/dav`。面板「设置」页有地址与 rclone 命令的一键复制。
 
+## 离线下载（哈拉云）
+
+把 HTTP/HTTPS 链接交给网盘服务端抓取，任务直接落进面板当前目录，本机不中转。
+
+- **入口**：进入支持该能力的存储后，右下角悬浮按钮 `⋯` →「离线下载」。面板只在目标存储支持时显示这一项（由服务端能力查询决定，前端不写死驱动名）。
+- **支持范围**：目前只有哈拉云（HalalCloudOpen）的原生离线任务。
+- **进度**：弹窗内每 3 秒刷新一次，状态为「排队中 / 等待下载 / 下载中 N% / 完成 / 失败」；提交后即使关掉弹窗，悬浮按钮上的绿色数字继续显示进行中数量（没有进行中任务时面板不再轮询）。
+- **任务不落盘**：任务表在内存里（与上传进度同构），重启服务后本机列表清空 —— 供应商侧任务仍在跑，只是面板不再显示它的进度。
+- **完成后目录自动刷新**：任务转完成/失败时服务端精确失效目标目录的列表缓存，面板侧再兜底刷一次当前目录，不必手动刷新、也不用等缓存过期。
+- **取消**：弹窗里点任务右侧的 `×` 只删供应商侧的任务记录，不动已经下载到网盘里的文件。
+
 ## API（自有面板接口）
 
 | 方法 | 路径 | 说明 |
@@ -135,6 +146,10 @@ http://<面板地址>/dav
 | GET | `/api/files?account=&fid=` | 列目录（fid 默认 `0` = 根目录） |
 | GET | `/api/download?account=&fid=&...` | 取直链（返回 url + 是否需代理） |
 | GET | `/api/stream?account=&fid=&name=&...&disp=inline` | 代理流式下载；`disp=inline` 用于在线播放 |
+| GET | `/api/offline/tools?path=` | 该路径（存储）支持的原生离线下载工具，空数组 = 不支持 |
+| POST | `/api/offline/add` | 提交离线任务 `{path, urls[], tool}`，由网盘服务端抓取到 `path` 目录 |
+| GET | `/api/offline/tasks` | 本机离线任务列表（面板弹窗按需轮询） |
+| POST | `/api/offline/remove` | 取消任务 `{ids[]}`（只删供应商侧记录，不动文件） |
 
 ## 架构
 
@@ -146,6 +161,7 @@ openlist-rs/
 │   ├── auth.rs           面板鉴权：中间件 + login/logout/status
 │   ├── api.rs            自有面板 API（账号/文件/流式代理）
 │   ├── compat.rs         OpenList 官方 API 兼容层（AList 协议）
+│   ├── offline.rs        原生离线下载任务表（内存态 + 3 秒轮询器）
 │   ├── assets.rs         rust-embed 嵌入 web/dist + SPA 静态服务
 │   ├── config.rs         账号持久化（redb + AES-256-GCM）+ 统一文件模型 Entry
 │   └── drivers/

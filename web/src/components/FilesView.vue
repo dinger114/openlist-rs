@@ -373,6 +373,15 @@
             <button class="fab-item" title="上传文件夹" @click="fabAct('upload-folder')">
               <Icon name="upload" :size="17" />
             </button>
+            <button
+              v-if="canWrite && offlineTools.length"
+              class="fab-item"
+              :title="offlineRunning > 0 ? `离线下载（${offlineRunning} 个进行中）` : '离线下载'"
+              @click="fabAct('offline')"
+            >
+              <Icon name="cloud-download" :size="17" />
+              <span v-if="offlineRunning > 0" class="fab-badge">{{ offlineRunning }}</span>
+            </button>
           </div>
         </transition>
         <button class="fab" :class="{ open: fabOpen }" title="操作" @click="fabOpen = !fabOpen">
@@ -424,12 +433,16 @@ const props = defineProps({
   viewMode: { type: String, default: 'list' },
   driverLabels: { type: Object, default: () => ({}) },
   // 当前账号是否可写（123 分享等只读驱动隐藏写操作）
-  canWrite: { type: Boolean, default: false }
+  canWrite: { type: Boolean, default: false },
+  // 当前存储支持的原生离线下载工具（空 = 不显示入口，来自 App.vue::loadOfflineTools）
+  offlineTools: { type: Array, default: () => [] },
+  // 进行中的离线任务数（> 0 时 FAB 显示徽标）
+  offlineRunning: { type: Number, default: 0 }
 })
 const emit = defineEmits([
   'go-accounts', 'go-home', 'open-account', 'switch-account', 'goto', 'refresh', 'update:view-mode',
   'open-dir', 'preview', 'close-preview', 'download',
-  'mkdir', 'rename', 'move', 'copy', 'remove', 'upload'
+  'mkdir', 'rename', 'move', 'copy', 'remove', 'upload', 'offline'
 ])
 
 // 统一数据源：根目录（未选网盘）时把网盘映射为“文件夹”行，进入网盘后为文件条目
@@ -637,7 +650,7 @@ function fabAct(act) {
   } else if (act === 'upload-folder') {
     pickMode = 'folder'
     folderInput.value?.click()
-  }
+  } else if (act === 'offline') emit('offline')
 }
 
 function onFilesPicked(ev) {
@@ -1357,6 +1370,7 @@ html.dark .grid-item:hover {
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
 }
 .fab-item {
+  position: relative;
   width: 40px;
   height: 40px;
   display: flex;
@@ -1379,6 +1393,20 @@ html.dark .fab-item:hover {
 .fab-item:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+/* 离线下载：进行中任务数徽标 */
+.fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #22a06b;
+  color: #fff;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
 }
 .fab-pop-enter-active,
 .fab-pop-leave-active {
