@@ -298,9 +298,14 @@
               v-for="e in displayEntries"
               :key="e.key"
               class="list-item mobile-item"
+              :class="{ selected: selected.has(e.key) }"
               @click="e.is_drive ? $emit('open-account', e.id) : rowActivate(e)"
             >
               <div class="mobile-row-info">
+                <span v-if="selectable(e)" class="li-check" @click.stop>
+                  <input type="checkbox" :checked="selected.has(e.key)" @change="toggleSelect(e)" />
+                </span>
+                <span v-else class="li-check"></span>
                 <span class="ficon">
                   <FileIcon :name="e.name" :is-dir="e.is_dir" />
                 </span>
@@ -348,8 +353,12 @@
               v-for="e in displayEntries"
               :key="e.key"
               class="grid-item"
+              :class="{ selected: selected.has(e.key) }"
               @click="gridActivate(e)"
             >
+              <span v-if="selectable(e)" class="grid-check" @click.stop>
+                <input type="checkbox" :checked="selected.has(e.key)" @change="toggleSelect(e)" />
+              </span>
               <div class="grid-icon">
                 <FileIcon :name="e.name" :is-dir="e.is_dir" />
               </div>
@@ -1421,6 +1430,19 @@ html.dark .grid-item:hover {
 }
 .grid-item:hover .grid-hover-actions {
   display: flex;
+}
+/* 批量选择：宫格卡片左上角浮层复选框 + 选中描边 */
+.grid-check {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.grid-item.selected {
+  outline: 2px solid #4080ff;
 }
 
 /* ===== 右下角 FAB（对齐官方 Right 工具栏） ===== */
