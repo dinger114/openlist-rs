@@ -41,6 +41,20 @@
         </div>
       </div>
 
+      <!-- 批量操作栏：面包屑下方常驻（根目录/只读账号/预览态不显示） -->
+      <div v-if="currentId && canWrite && !preview" class="batch-bar">
+        <label class="batch-all" title="全选 / 取消全选">
+          <input ref="allBox" type="checkbox" :checked="allSelected" @change="toggleAll" />
+        </label>
+        <span class="batch-count">{{ selectedCount ? `已选 ${selectedCount} 项` : '未选择' }}</span>
+        <button class="btn btn-sm btn-secondary" :disabled="!selectableEntries.length" @click="invertSelect">反选</button>
+        <button class="btn btn-sm btn-secondary" :disabled="!selectedCount" @click="$emit('batch-move', picked)">移动到…</button>
+        <button class="btn btn-sm btn-secondary" :disabled="!selectedCount" @click="$emit('batch-copy', picked)">复制到…</button>
+        <button class="btn btn-sm btn-secondary" :disabled="!selectedCount" @click="$emit('batch-rename', picked)">重命名</button>
+        <button class="btn btn-sm btn-danger" :disabled="!selectedCount" @click="$emit('batch-remove', picked)">删除</button>
+        <button v-if="selectedCount" class="btn btn-sm btn-ghost" @click="clearSelection">清除选择</button>
+      </div>
+
       <div v-if="err" class="alert alert-error">{{ err }}</div>
 
       <!-- 预览页（对齐官方 File 页：文件名行 + obj-box 卡片） -->
@@ -411,7 +425,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import Icon from './Icon.vue'
 import FileIcon from './FileIcon.vue'
 import { Marked } from 'marked'
@@ -448,7 +462,8 @@ const props = defineProps({
 const emit = defineEmits([
   'go-accounts', 'go-home', 'open-account', 'switch-account', 'goto', 'refresh', 'update:view-mode',
   'open-dir', 'preview', 'close-preview', 'download',
-  'mkdir', 'rename', 'move', 'copy', 'remove', 'upload', 'offline'
+  'mkdir', 'rename', 'move', 'copy', 'remove', 'upload', 'offline',
+  'batch-move', 'batch-copy', 'batch-rename', 'batch-remove'
 ])
 
 // 统一数据源：根目录（未选网盘）时把网盘映射为“文件夹”行，进入网盘后为文件条目
@@ -486,6 +501,22 @@ function toggleSelect(e) {
 }
 function clearSelection() {
   selected.value = new Set()
+}
+// 全选/半选：手机端没有表头行，全选统一放常驻栏
+const allBox = ref(null)
+const allSelected = computed(
+  () => selectableEntries.value.length > 0 && selected.value.size === selectableEntries.value.length
+)
+const someSelected = computed(() => selected.value.size > 0 && !allSelected.value)
+// HTML 的 indeterminate 不是属性，只能用 JS 设
+watchEffect(() => {
+  if (allBox.value) allBox.value.indeterminate = someSelected.value
+})
+function toggleAll() {
+  selected.value = allSelected.value ? new Set() : new Set(selectableEntries.value.map((e) => e.key))
+}
+function invertSelect() {
+  selected.value = new Set(selectableEntries.value.filter((e) => !selected.value.has(e.key)).map((e) => e.key))
 }
 // 换目录 / 换账号 / 列表刷新后清空选择
 watch(() => props.currentId, clearSelection)
@@ -727,6 +758,28 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* ===== 批量操作栏（面包屑下方常驻，文档流内） ===== */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--ol-panel);
+  border: 1px solid var(--ol-border);
+}
+.batch-all {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.batch-count {
+  font-size: 13px;
+  color: var(--ol-text-dim);
+  white-space: nowrap;
+  margin-right: auto; /* 按钮靠右 */
 }
 .crumbs {
   display: flex;
@@ -1501,6 +1554,14 @@ html.dark .fab-item:hover {
 @media (max-width: 768px) {
   .page {
     padding: 4px 12px 40px;
+  }
+  /* 批量栏按钮多：换行，不横滚 */
+  .batch-bar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .batch-count {
+    margin-right: 0;
   }
   .lt-date,
   .li-date {
