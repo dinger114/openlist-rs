@@ -152,6 +152,8 @@ pub(crate) struct AppState {
     /// 活跃上传进度：key = 归一化路径，value = 已上传字节数
     /// /api/fs/put、/api/fs/form 写入，完成后移除；/api/fs/put/progress 轮询
     pub(crate) upload_progress: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>>,
+    /// 原生离线下载任务表（内存态，见 src/offline.rs）
+    pub(crate) offline: Arc<crate::offline::OfflineManager>,
 }
 
 impl AppState {
@@ -168,6 +170,7 @@ impl AppState {
             index: Arc::new(Mutex::new(HashMap::new())),
             list_cache: Arc::new(ListCache::new()),
             upload_progress: Arc::new(Mutex::new(HashMap::new())),
+            offline: Arc::new(crate::offline::OfflineManager::new()),
         }
     }
 

@@ -36,6 +36,8 @@ const OTHER_HEADER_KEY: &str = "other-header";
 const OTHER_HEADER_VALUE: &str = "other-value";
 const CONTENT_TYPE: &str = "application/json; charset=utf-8";
 const LIST_LIMIT: i64 = 100;
+/// 离线任务列表一页最多拉多少条（减少轮询期间的请求数）
+const OFFLINE_TASK_PAGE_SIZE: i64 = 200;
 
 /// 上传分块默认值：服务端不在任务里给 block_size/block_codec/block_hash_type 时用这套
 /// （0x55 = raw、0x12 = sha2-256，对齐 Go halalcloud_upload.go:39-47）
@@ -516,6 +518,80 @@ impl HalalcloudOpen {
         Ok(())
     }
 
+    // ---------- 原生离线下载（/v6/offline_task/*）----------
+
+    /// 创建离线任务，落盘到供应商侧目录 `save_path`（= 面板里的目标目录 path）
+    pub async fn offline_add(
+        &self,
+        url: &str,
+        save_path: &str,
+    ) -> Result<OfflineTaskStatus, String> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err("离线下载链接为空".into());
+        }
+        let body = json!({ "url": url, "save_path": save_path });
+        let v = self
+            .request(reqwest::Method::POST, "/v6/offline_task/add", Some(&body))
+            .await?;
+        parse_user_task(&v).ok_or_else(|| {
+            format!(
+                "halalcloud 创建离线任务失败：响应中没有任务 identity（{}）",
+                api_message(&v, "")
+            )
+        })
+    }
+
+    /// 拉全量离线任务（分页到 token 为空）
+    pub async fn offline_list(&self) -> Result<Vec<OfflineTaskStatus>, String> {
+        let mut out = Vec::new();
+        let mut token = String::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            let body = json!({ "list_info": { "limit": OFFLINE_TASK_PAGE_SIZE, "token": token } });
+            let v = self
+                .request(reqwest::Method::POST, "/v6/offline_task/list", Some(&body))
+                .await?;
+            if let Some(tasks) = v.get("tasks").and_then(|t| t.as_array()) {
+                for t in tasks {
+                    if let Some(s) = parse_user_task(t) {
+                        out.push(s);
+                    }
+                }
+            }
+            match next_page_token(&token, &v)? {
+                None => break,
+                Some(next) => {
+                    if !seen.insert(next.clone()) {
+                        return Err("halalcloud 离线任务分页 token 重复".into());
+                    }
+                    token = next;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// 删除任务记录（delete_files 固定 false：只删记录，不动网盘里的文件）
+    pub async fn offline_delete(&self, identities: &[String]) -> Result<(), String> {
+        let ids: Vec<String> = identities
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let body = json!({ "identity": ids, "delete_files": false });
+        self.request(
+            reqwest::Method::POST,
+            "/v6/offline_task/delete",
+            Some(&body),
+        )
+        .await
+        .map(|_| ())
+    }
+
     /// 上传：create_upload_task → 串行分块（每块算 CIDv1 后 POST 到任务给的 upload_address）→ 收尾
     ///
     /// 对齐 Go 版 halalcloud_upload.go：
@@ -809,6 +885,80 @@ impl ApiErr {
             message,
         }
     }
+}
+
+/// 供应商离线任务的状态契约（Go 版 util.go 顶部注释，未在本仓实测）
+const OFFLINE_STATUS_WAITING_TO_ADD: i64 = 0;
+const OFFLINE_STATUS_WAITING_TO_DOWNLOAD: i64 = 10;
+pub(crate) const OFFLINE_STATUS_COMPLETE: i64 = 1000;
+
+/// `/v6/offline_task/*` 的任务对象（只取本仓要用的字段）
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct OfflineTaskStatus {
+    pub(crate) identity: String,
+    pub(crate) status: i64,
+    /// 百分比（供应商原样给，可能越界，用前先夹到 0..=100）
+    pub(crate) progress: i64,
+    pub(crate) total_bytes: i64,
+    pub(crate) name: String,
+    pub(crate) message: String,
+    pub(crate) code: i64,
+}
+
+/// 解析任务对象；没有 identity 的一律当成「不是任务对象」返回 None
+fn parse_user_task(v: &Value) -> Option<OfflineTaskStatus> {
+    let identity = v.get("identity").map(value_to_string).unwrap_or_default();
+    if identity.is_empty() {
+        return None;
+    }
+    // size 缺失（List 常见）时退到 bytes_total
+    let mut total = v.get("size").map(value_to_i64).unwrap_or(0);
+    if total <= 0 {
+        total = v.get("bytes_total").map(value_to_i64).unwrap_or(0);
+    }
+    Some(OfflineTaskStatus {
+        identity,
+        status: v.get("status").map(value_to_i64).unwrap_or(0),
+        progress: v.get("progress").map(value_to_i64).unwrap_or(0),
+        total_bytes: total,
+        name: v.get("name").map(value_to_string).unwrap_or_default(),
+        message: v.get("message").map(value_to_string).unwrap_or_default(),
+        code: v.get("code").map(value_to_i64).unwrap_or(0),
+    })
+}
+
+/// 给面板看的状态文案（中文，含进度百分比）
+pub(crate) fn offline_status_text(t: &OfflineTaskStatus) -> String {
+    let msg = t.message.trim();
+    match t.status {
+        OFFLINE_STATUS_COMPLETE => "完成".to_string(),
+        s if s < 0 => {
+            if msg.is_empty() {
+                format!("失败 (status {s})")
+            } else {
+                msg.to_string()
+            }
+        }
+        OFFLINE_STATUS_WAITING_TO_ADD => "排队中".to_string(),
+        OFFLINE_STATUS_WAITING_TO_DOWNLOAD => "等待下载".to_string(),
+        _ => format!("下载中 {}%", t.progress.clamp(0, 100)),
+    }
+}
+
+/// 计算下一页 token：None = 已到末页。token 不前进视为协议异常（否则轮询会死循环）
+fn next_page_token(prev: &str, resp: &Value) -> Result<Option<String>, String> {
+    let next = resp
+        .get("list_info")
+        .and_then(|l| l.get("token"))
+        .map(value_to_string)
+        .unwrap_or_default();
+    if next.is_empty() {
+        return Ok(None);
+    }
+    if next == prev {
+        return Err("halalcloud 离线任务分页 token 未前进".into());
+    }
+    Ok(Some(next))
 }
 
 /// 组装条目：fid 优先用 identity，目录无 identity 时用 path；path 原样存 extra
@@ -1387,5 +1537,74 @@ mod tests {
         // 既没有 task 也没 upload_address → 报错并带上服务端 message
         let e = UploadTask::from_json(&json!({ "message": "quota exceeded" })).unwrap_err();
         assert!(e.contains("quota exceeded"), "{e}");
+    }
+
+    // ----- 原生离线下载（/v6/offline_task/*）-----
+
+    #[test]
+    fn test_parse_user_task_shapes() {
+        // size/bytes_total 是字符串形态，status/code 是数字
+        let v = serde_json::json!({
+            "identity": "task-1",
+            "status": 1000,
+            "progress": "100",
+            "size": "1234",
+            "bytes_total": "1234",
+            "name": "movie.mkv",
+            "message": ""
+        });
+        let t = parse_user_task(&v).expect("应能解析");
+        assert_eq!(t.identity, "task-1");
+        assert_eq!(t.total_bytes, 1234);
+        assert_eq!(t.status, 1000);
+        assert!(offline_status_text(&t).contains("完成"), "1000 应映射完成");
+    }
+
+    #[test]
+    fn test_parse_user_task_falls_back_to_bytes_total() {
+        // List 响应偶尔缺 size，只有 bytes_total
+        let v = serde_json::json!({ "identity": "t", "status": 10, "bytes_total": "99" });
+        assert_eq!(parse_user_task(&v).unwrap().total_bytes, 99);
+        assert_eq!(
+            offline_status_text(&parse_user_task(&v).unwrap()),
+            "等待下载"
+        );
+    }
+
+    #[test]
+    fn test_offline_status_text_matrix() {
+        let mk = |status: i64, progress: i64, msg: &str| OfflineTaskStatus {
+            identity: "t".into(),
+            status,
+            progress,
+            total_bytes: 0,
+            name: String::new(),
+            message: msg.into(),
+            code: 0,
+        };
+        assert_eq!(offline_status_text(&mk(0, 0, "")), "排队中");
+        assert_eq!(offline_status_text(&mk(50, 42, "")), "下载中 42%");
+        assert_eq!(offline_status_text(&mk(-1, 0, "链接已失效")), "链接已失效");
+        // 无 message 的失败要能自证是哪个状态
+        assert_eq!(offline_status_text(&mk(-7, 0, "")), "失败 (status -7)");
+        // 越界的 progress 先夹到 0..=100
+        assert_eq!(offline_status_text(&mk(50, 900, "")), "下载中 100%");
+        // identity 缺失 = 不是任务对象
+        assert!(parse_user_task(&serde_json::json!({ "status": 1 })).is_none());
+    }
+
+    #[test]
+    fn test_next_page_token_guards() {
+        // token 为空 = 结束
+        let resp = serde_json::json!({ "tasks": [], "list_info": { "token": "" } });
+        assert_eq!(next_page_token("", &resp).unwrap(), None);
+        // token 前进 = 继续
+        let resp = serde_json::json!({ "list_info": { "token": "t2" } });
+        assert_eq!(next_page_token("t1", &resp).unwrap(), Some("t2".into()));
+        // token 原地踏步 / 缺 list_info 之后又回来 = 报错，避免死循环
+        let same = serde_json::json!({ "list_info": { "token": "t1" } });
+        assert!(next_page_token("t1", &same).is_err());
+        let empty = serde_json::json!({});
+        assert_eq!(next_page_token("t1", &empty).unwrap(), None);
     }
 }

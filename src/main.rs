@@ -4,6 +4,7 @@ mod auth;
 mod compat;
 mod config;
 mod drivers;
+mod offline;
 mod password;
 mod ratelimit;
 mod sign;
@@ -97,6 +98,9 @@ async fn main() {
         });
     }
 
+    // 原生离线下载：每 3 秒给有进行中任务的账号拉一次供应商任务列表（见 src/offline.rs）
+    offline::spawn_poller(state.clone());
+
     let app = Router::new()
         // 自有面板 API
         .route(
@@ -135,6 +139,11 @@ async fn main() {
         .route("/api/fs/put", post(compat::compat_fs_put))
         .route("/api/fs/form", post(compat::compat_fs_form))
         .route("/api/fs/put/progress", get(compat::compat_fs_put_progress))
+        // 原生离线下载（供应商侧任务，见 src/offline.rs）
+        .route("/api/offline/tools", get(api::offline_tools))
+        .route("/api/offline/add", post(api::offline_add))
+        .route("/api/offline/tasks", get(api::offline_tasks))
+        .route("/api/offline/remove", post(api::offline_remove))
         .route("/d/{*path}", get(compat::compat_down))
         .route("/p/{*path}", get(compat::compat_proxy))
         // WebDAV 服务（自带 Basic/Bearer 鉴权，见 src/webdav.rs）

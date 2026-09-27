@@ -1250,6 +1250,40 @@ impl Driver {
             Driver::NeteaseMusic(d) => d.put(dst_dir_fid, input).await,
         }
     }
+
+    // ---------- 原生离线下载能力（当前只有哈拉云，见 src/offline.rs）----------
+
+    /// 该驱动支持的原生离线下载工具（空 = 不支持）
+    pub fn offline_tools(&self) -> Vec<&'static str> {
+        match self {
+            Driver::HalalcloudOpen(_) => vec!["HalalCloudOpen"],
+            _ => Vec::new(),
+        }
+    }
+
+    /// 创建原生离线任务，返回供应商任务 identity
+    pub async fn offline_add(&self, url: &str, save_path: &str) -> Result<String, String> {
+        match self {
+            Driver::HalalcloudOpen(d) => d.offline_add(url, save_path).await.map(|t| t.identity),
+            _ => Err("该存储不支持离线下载".into()),
+        }
+    }
+
+    /// 拉取该账号在供应商侧的全部离线任务
+    pub async fn offline_list(&self) -> Result<Vec<halalcloud_open::OfflineTaskStatus>, String> {
+        match self {
+            Driver::HalalcloudOpen(d) => d.offline_list().await,
+            _ => Err("该存储不支持离线下载".into()),
+        }
+    }
+
+    /// 删除供应商侧任务记录
+    pub async fn offline_delete(&self, identities: &[String]) -> Result<(), String> {
+        match self {
+            Driver::HalalcloudOpen(d) => d.offline_delete(identities).await,
+            _ => Err("该存储不支持离线下载".into()),
+        }
+    }
 }
 
 #[cfg(test)]

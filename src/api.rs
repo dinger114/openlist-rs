@@ -3668,6 +3668,152 @@ pub(crate) async fn patch_account_enabled(
     Ok(Json(json!({ "id": id, "enabled": req.enabled })))
 }
 
+// ---------- 原生离线下载（供应商侧任务，见 src/offline.rs）----------
+
+#[derive(Deserialize)]
+pub(crate) struct OfflineToolsQuery {
+    pub(crate) path: String,
+}
+
+/// 目标路径支持的原生离线下载工具（当前只有哈拉云）
+pub(crate) async fn offline_tools(
+    State(st): State<AppState>,
+    Query(q): Query<OfflineToolsQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let (account_id, _entry) = st
+        .resolve_path(&q.path)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    {
+        let data = st.store.data.lock().unwrap();
+        if let Some(acc) = data.accounts.iter().find(|a| a.id == account_id) {
+            if !acc.enabled {
+                return Err((StatusCode::FORBIDDEN, "该存储已禁用".into()));
+            }
+        }
+    }
+    let driver = st
+        .get_driver(&account_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!({ "tools": driver.offline_tools() })))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OfflineAddReq {
+    pub(crate) path: String,
+    #[serde(default)]
+    pub(crate) urls: Vec<String>,
+    pub(crate) tool: String,
+}
+
+/// 提交离线下载任务：链接一行一个，任务由供应商直接落进 path 指定的目录
+pub(crate) async fn offline_add(
+    State(st): State<AppState>,
+    Json(req): Json<OfflineAddReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let (account_id, entry) = st
+        .resolve_path(&req.path)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if !entry.is_dir {
+        return Err((StatusCode::BAD_REQUEST, "离线下载的目标必须是目录".into()));
+    }
+    let driver = st
+        .get_driver(&account_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if !driver.offline_tools().contains(&req.tool.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("该存储不支持离线下载工具 {}", req.tool),
+        ));
+    }
+    // 目录的供应商 path 优先取 extra.path，缺失退 fid（与驱动 id_and_path 同规则）
+    let save_path = entry
+        .extra
+        .as_ref()
+        .and_then(|x| x.get("path"))
+        .and_then(|p| p.as_str())
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if entry.fid.is_empty() || entry.fid == "0" {
+                "/".to_string()
+            } else {
+                entry.fid.clone()
+            }
+        });
+
+    let mut created = Vec::new();
+    for url in req
+        .urls
+        .iter()
+        .map(|u| u.trim())
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+    {
+        let gid = driver
+            .offline_add(&url, &save_path)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+        let mut t = crate::offline::OfflineTask::new(
+            req.tool.clone(),
+            account_id.clone(),
+            entry.fid.clone(),
+            req.path.clone(),
+            url,
+        );
+        t.gid = gid;
+        t.status_text = "已提交".into();
+        st.offline.insert(t.clone());
+        created.push(t);
+    }
+    if created.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "没有有效的下载链接".into()));
+    }
+    Ok(Json(json!({ "tasks": created })))
+}
+
+/// 任务列表（面板弹窗按需轮询这个接口）
+pub(crate) async fn offline_tasks(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({ "tasks": st.offline.list() }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OfflineRemoveReq {
+    pub(crate) ids: Vec<String>,
+}
+
+/// 取消/清理任务：删供应商侧记录（不动已下载的文件），本机标 Removed
+pub(crate) async fn offline_remove(
+    State(st): State<AppState>,
+    Json(req): Json<OfflineRemoveReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    for id in &req.ids {
+        let Some(t) = st.offline.get(id) else {
+            continue;
+        };
+        if !t.gid.is_empty() {
+            if let Ok(driver) = st.get_driver(&t.account_id).await {
+                // 供应商侧可能卡住：超时也继续清本机记录
+                let _ = tokio::time::timeout(
+                    crate::offline::PROVIDER_DELETE_TIMEOUT,
+                    driver.offline_delete(std::slice::from_ref(&t.gid)),
+                )
+                .await;
+            }
+        }
+        if let Some(mut t) = st.offline.remove(id) {
+            t.state = crate::offline::TaskState::Removed;
+            t.status_text = "已取消".into();
+            t.end_at = Some(crate::offline::now_unix());
+            st.offline.insert(t);
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
