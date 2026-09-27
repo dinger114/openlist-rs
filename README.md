@@ -12,6 +12,7 @@
 - 夸克 `__puus` cookie 滚动更新自动回写；123 网盘 401 自动重登；123 列表接口 700ms 限速（对齐 Go 版）
 - **WebDAV 服务**：`/dav` 端点，访达 / 资源管理器 / rclone 可直接挂载（面板账号 Basic 认证；读写按驱动能力，只读存储写操作回 403）
 - **存储启用/禁用**：管理页每张存储卡片附有开关，关闭后该存储从网盘列表隐藏，不影响配置数据
+- **批量操作**：列表行左侧复选框 + 面包屑下方常驻批量栏（全选/半选/反选/清除选择），可批量移动、复制（含文件夹）、重命名（逐行改名或查找替换）、删除；移动/复制不能选当前目录，也不能把文件夹放进它自己里面
 - **多存储驱动**：夸克 / UC / 夸克Open / 夸克TV / UC TV、123网盘 / 123Open / 123Link、阿里云盘（旧）/ 阿里云盘Open / 阿里分享、115网盘 / 115Open / 115分享、百度网盘、天翼云盘、移动云盘、迅雷、蓝奏云、蓝奏云优创 / 飞鸡盘、Terabox、OneDrive / OneDrive分享 / OneDriveAPP、Google Drive / Google Photo、Dropbox、PikPak / PikPak分享、Yandex.Disk、S3 / BunnyCDN、SFTP、FTP、SMB、WebDAV、AList v3、OpenList 挂载 / OpenList 分享、Seafile、可道云 KodBox、Cloudreve V4、虚拟存储（测试）等
 
 ## 启动参数
