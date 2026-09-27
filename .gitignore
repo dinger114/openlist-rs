@@ -8,3 +8,8 @@
 web/node_modules/
 web/dist/
 target/
+data/
+
+# 系统/编辑器杂物
+.DS_Store
+.hermes/
