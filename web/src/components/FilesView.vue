@@ -218,6 +218,7 @@
         <!-- 列表视图（对齐官方 List：标题行 + 圆角行，无表格线） -->
         <div v-else-if="viewMode === 'list'" class="obj-box">
           <div class="list-title">
+            <span class="lt-check"></span>
             <span class="lt-name">名称</span>
             <span class="lt-size">大小</span>
             <span class="lt-date">修改时间</span>
@@ -230,8 +231,13 @@
               v-for="e in displayEntries"
               :key="e.key"
               class="list-item"
+              :class="{ selected: selected.has(e.key) }"
               @click="rowActivate(e)"
             >
+              <span v-if="selectable(e)" class="li-check" @click.stop>
+                <input type="checkbox" :checked="selected.has(e.key)" @change="toggleSelect(e)" />
+              </span>
+              <span v-else class="li-check"></span>
               <span class="li-name">
                 <span class="ficon">
                   <FileIcon :name="e.name" :is-dir="e.is_dir" />
@@ -463,6 +469,27 @@ const displayEntries = computed(() => {
       updated_at: null
     }))
 })
+
+// ===== 批量选择 =====
+// 存 displayEntries 的 key（进账号后即 fid；根目录是 'drive-<id>'）
+const selected = ref(new Set())
+// 只有可写、非账号行才给复选框
+const selectable = (e) => props.canWrite && !e.is_drive
+const selectableEntries = computed(() => displayEntries.value.filter(selectable))
+const picked = computed(() => selectableEntries.value.filter((e) => selected.value.has(e.key)))
+const selectedCount = computed(() => picked.value.length)
+function toggleSelect(e) {
+  const next = new Set(selected.value)
+  if (next.has(e.key)) next.delete(e.key)
+  else next.add(e.key)
+  selected.value = next // Set 必须换实例才触发响应式
+}
+function clearSelection() {
+  selected.value = new Set()
+}
+// 换目录 / 换账号 / 列表刷新后清空选择
+watch(() => props.currentId, clearSelection)
+watch(() => props.entries, clearSelection)
 
 // ===== 外部播放器（对齐官方 video_box.tsx players 列表，图标来自官方 images） =====
 const PLAYERS = [
@@ -802,8 +829,16 @@ html.dark .obj-box {
   font-weight: 700;
   color: var(--ol-text-dim);
 }
+.lt-check,
+.li-check {
+  /* 批量选择复选框列：行内与表头各占一列，宽度必须一致 */
+  width: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
 .lt-name {
-  width: 50%;
+  width: calc(50% - 32px);
 }
 .lt-size {
   width: 17%;
@@ -846,11 +881,18 @@ html.dark .obj-box {
 html.dark .list-item:hover {
   background: rgba(255, 255, 255, 0.07);
 }
+/* 批量选择：选中行高亮（栏里显示「已选 N 项」之外，行本身也要看得出来） */
+.list-item.selected {
+  background: rgba(64, 128, 255, 0.12);
+}
+html.dark .list-item.selected {
+  background: rgba(64, 128, 255, 0.18);
+}
 .li-name {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 50%;
+  width: calc(50% - 32px);
   min-width: 0;
   padding-right: 8px;
 }
@@ -1466,7 +1508,7 @@ html.dark .fab-item:hover {
   }
   .lt-name,
   .li-name {
-    width: 76%;
+    width: calc(76% - 32px);
   }
   .lt-size,
   .li-size {
