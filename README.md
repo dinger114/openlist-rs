@@ -13,6 +13,7 @@
 - **WebDAV 服务**：`/dav` 端点，访达 / 资源管理器 / rclone 可直接挂载（面板账号 Basic 认证；读写按驱动能力，只读存储写操作回 403）
 - **存储启用/禁用**：管理页每张存储卡片附有开关，关闭后该存储从网盘列表隐藏，不影响配置数据
 - **批量操作**：列表行左侧复选框 + 面包屑下方常驻批量栏（全选/半选/反选/清除选择），可批量移动、复制（含文件夹）、重命名（逐行改名或查找替换）、删除；移动/复制不能选当前目录，也不能把文件夹放进它自己里面
+- **目录内搜索**：面包屑行右侧搜索框，从当前目录往下搜（1/2/3/全部层，默认 1 层，可含文件夹）；结果按「文件名 + 所在目录」列出，可勾选后**跨目录**批量移动/复制/重命名/删除（按所在目录分组提交），也能一键跳到命中项所在目录。按需遍历 + 复用列表缓存，扫目录 ≤300 / 结果 ≤500 并给出触顶提示
 - **多存储驱动**：夸克 / UC / 夸克Open / 夸克TV / UC TV、123网盘 / 123Open / 123Link、阿里云盘（旧）/ 阿里云盘Open / 阿里分享、115网盘 / 115Open / 115分享、百度网盘、天翼云盘、移动云盘、迅雷、蓝奏云、蓝奏云优创 / 飞鸡盘、Terabox、OneDrive / OneDrive分享 / OneDriveAPP、Google Drive / Google Photo、Dropbox、PikPak / PikPak分享、Yandex.Disk、S3 / BunnyCDN、SFTP、FTP、SMB、WebDAV、AList v3、OpenList 挂载 / OpenList 分享、Seafile、可道云 KodBox、Cloudreve V4、虚拟存储（测试）等
 
 ## 启动参数
@@ -145,6 +146,7 @@ http://<面板地址>/dav
 | PATCH | `/api/accounts/{id}/enabled` | 切换启用/禁用 `{enabled: bool}`（不重验证） |
 | DELETE | `/api/accounts/{id}` | 删除账号 |
 | GET | `/api/files?account=&fid=` | 列目录（fid 默认 `0` = 根目录） |
+| GET | `/api/search?path=&q=&depth=&scope=` | 目录内搜索：从 `path` 往下 `depth` 层（默认 1）按文件名不区分大小写包含匹配，结果带 `path`/`parent_path`；`scope=all` 时含文件夹 |
 | GET | `/api/download?account=&fid=&...` | 取直链（返回 url + 是否需代理） |
 | GET | `/api/stream?account=&fid=&name=&...&disp=inline` | 代理流式下载；`disp=inline` 用于在线播放 |
 | GET | `/api/offline/tools?path=` | 该路径（存储）支持的原生离线下载工具，空数组 = 不支持 |
@@ -163,6 +165,7 @@ openlist-rs/
 │   ├── api.rs            自有面板 API（账号/文件/流式代理）
 │   ├── compat.rs         OpenList 官方 API 兼容层（AList 协议）
 │   ├── offline.rs        原生离线下载任务表（内存态 + 3 秒轮询器）
+│   ├── search.rs         目录内搜索（按需 BFS + 扫描/结果上限，复用列表缓存）
 │   ├── assets.rs         rust-embed 嵌入 web/dist + SPA 静态服务
 │   ├── config.rs         账号持久化（redb + AES-256-GCM）+ 统一文件模型 Entry
 │   └── drivers/
