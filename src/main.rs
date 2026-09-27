@@ -7,6 +7,7 @@ mod drivers;
 mod offline;
 mod password;
 mod ratelimit;
+mod search;
 mod sign;
 mod state;
 mod webdav;
@@ -117,6 +118,7 @@ async fn main() {
         )
         .route("/api/accounts/{id}/secret", get(api::get_account_secret))
         .route("/api/files", get(api::list_files))
+        .route("/api/search", get(api::search_files))
         .route("/api/download", get(api::get_download))
         .route("/api/stream", get(api::stream_file))
         .route("/api/login", post(auth::login))

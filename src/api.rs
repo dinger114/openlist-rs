@@ -2125,6 +2125,71 @@ pub(crate) async fn list_files(
     Ok(Json(json!({ "entries": entries })))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct SearchQuery {
+    /// 搜索根的虚拟路径（= 面板 currentPath()，如 `/AList V3` 或 `/AList V3/B`）
+    pub(crate) path: String,
+    /// 关键词（文件名不区分大小写包含）
+    pub(crate) q: String,
+    /// 往下钻几层，默认 1（当前目录 + 其直接子目录，够筛出 A/B/C）
+    #[serde(default)]
+    pub(crate) depth: Option<usize>,
+    /// scope=all 时结果含文件夹，默认只含文件
+    #[serde(default)]
+    pub(crate) scope: Option<String>,
+}
+
+/// GET /api/search?path=&q=&depth=&scope=
+///
+/// 目录内搜索（不落索引，按需 BFS 遍历，见 `src/search.rs`）。结果条目带
+/// `path` / `parent_path` / `parent_fid`，前端据此把批量操作按父目录分组，
+/// 复用 `/api/fs/{remove,move,copy,rename}` 完成跨目录批量。
+pub(crate) async fn search_files(
+    State(st): State<AppState>,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let kw = q.q.trim().to_string();
+    if kw.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "搜索关键词为空".into()));
+    }
+    let root_path = crate::compat::normalize_path(&q.path);
+    let (acc_id, root_fid) = st
+        .resolve_write_dir(&root_path)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    // 禁用的账号不对外提供搜索（与 /api/files 一致）
+    {
+        let data = st.store.data.lock().unwrap();
+        if let Some(acc) = data.accounts.iter().find(|a| a.id == acc_id) {
+            if !acc.enabled {
+                return Err((StatusCode::FORBIDDEN, "该存储已禁用".into()));
+            }
+        }
+    }
+    let depth = q.depth.unwrap_or(1).min(crate::search::SEARCH_MAX_DEPTH);
+    let out = crate::search::search_tree(
+        &st,
+        &acc_id,
+        &root_fid,
+        &root_path,
+        &kw,
+        depth,
+        q.scope.as_deref() == Some("all"),
+        crate::search::SEARCH_MAX_HITS,
+        crate::search::SEARCH_MAX_DIRS,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(json!({
+        "entries": out.hits,
+        "path": root_path,
+        "depth": depth,
+        "scanned_dirs": out.scanned_dirs,
+        "truncated": out.truncated,
+        "failed_dirs": out.failed_dirs,
+    })))
+}
+
 pub(crate) fn sort_entries(entries: &mut [Entry]) {
     entries.sort_by(|a, b| {
         b.is_dir
