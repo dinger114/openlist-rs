@@ -132,6 +132,9 @@ async fn main() {
         .route("/api/me", get(compat::compat_me))
         .route("/api/fs/list", post(compat::compat_fs_list))
         .route("/api/fs/get", post(compat::compat_fs_get))
+        // 客户端（xlist 等）的「选目录」与「搜索」走这两个端点
+        .route("/api/fs/dirs", post(compat::compat_fs_dirs))
+        .route("/api/fs/search", post(compat::compat_fs_search))
         // 写操作（对齐 Go 版 OpenList 端点）
         .route("/api/fs/mkdir", post(compat::compat_fs_mkdir))
         .route("/api/fs/rename", post(compat::compat_fs_rename))

@@ -133,7 +133,12 @@ pub(crate) fn join_path(parent: &str, name: &str) -> String {
 /// 对象 JSON。`path` 是该对象的完整路径，用于生成 `sign` 字段：
 /// 目录留空（对齐 Go `common.Sign`），文件给出链接签名，客户端可直接拼 /d、/p 链接。
 fn obj_resp_json(e: &Entry, path: &str, secret: &[u8]) -> Value {
-    let modified = e.updated_at.map(rfc3339_cst);
+    // modified/created 永远给字符串，绝不发 null：上游 Go 的 model.Obj.Modified 是 time.Time
+    // （零值序列化成 0001-01-01T00:00:00Z），从不为空。AList 客户端（xlist 等）默认排序是
+    // 「时间降序」，直接 `modified!` 取值 —— 收到 null 就抛
+    // `Null check operator used on a null value`，被 onInit 的 catch 吞掉后整页空白、无提示。
+    // 命中面：虚拟根（账号条目，Account 无 mtime）以及少数不设 updated_at 的驱动。
+    let modified = rfc3339_cst(e.updated_at.unwrap_or(0));
     let sign_val = if e.is_dir {
         String::new()
     } else {
@@ -404,6 +409,189 @@ pub(crate) async fn compat_fs_list(
         })),
     )
         .into_response()
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct CompatDirsReq {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    force_root: bool,
+}
+
+/// POST /api/fs/dirs —— 对齐 OpenList `FsDirs`：只列**一层目录**，`data` 是**数组**
+/// `[{name, modified}]`（不是 `{content:[…]}`）。
+///
+/// AList 客户端（xlist 等）用它渲染「选择目录 / 移动目标」；缺这个端点时请求会掉进前端
+/// SPA 兜底拿回 HTML，客户端只报 `DioException`/类型错误，页面空白且无提示。
+pub(crate) async fn compat_fs_dirs(
+    State(st): State<AppState>,
+    Json(req): Json<CompatDirsReq>,
+) -> Response {
+    let path = normalize_path(&req.path);
+    let entries = match st.compat_list_dir(&path, false).await {
+        Ok(e) => e,
+        Err(e) => {
+            // force_root：路径不可用时退回虚拟根（上游对非 admin 的 JoinPath 兜底语义）
+            if req.force_root && path != "/" {
+                match st.compat_list_dir("/", false).await {
+                    Ok(e) => e,
+                    Err(e2) => return compat_err(e2, 500),
+                }
+            } else {
+                return compat_err(e, 500);
+            }
+        }
+    };
+    let dirs: Vec<Value> = entries
+        .iter()
+        .filter(|e| e.is_dir)
+        .map(|e| {
+            json!({
+                "name": e.name,
+                // 与 obj_resp_json 同一口径：无 mtime 给 unix 0 占位，绝不为 null
+                "modified": rfc3339_cst(e.updated_at.unwrap_or(0)),
+            })
+        })
+        .collect();
+    compat_ok(Value::Array(dirs))
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct CompatSearchReq {
+    #[serde(default)]
+    keywords: String,
+    #[serde(default)]
+    parent: String,
+    /// 0 = 全部、1 = 只目录、2 = 只文件（对齐上游 `model.SearchReq`）
+    #[serde(default)]
+    scope: i64,
+    #[serde(default)]
+    page: i64,
+    #[serde(default)]
+    per_page: i64,
+    #[serde(default)]
+    password: String,
+}
+
+/// 兼容层搜索的降级深度：本仓没有索引制搜索（Go 上游要预建 bleve/db 全量索引），
+/// 只能按需 BFS（`src/search.rs`）。每层 = 每个目录一次列表请求，远程挂载盘慢，
+/// 所以固定下钻 3 层，真正的护栏是 search.rs 的 300 目录 / 500 结果上限。
+const COMPAT_SEARCH_DEPTH: usize = 3;
+
+/// POST /api/fs/search —— 对齐 OpenList `SearchResp`：
+/// `data = {content:[{name,parent,is_dir,size,type}], total}`。
+///
+/// `parent` 是虚拟路径：`/` 表示搜全部账号（逐账号搜后合并，结果可能不全，
+/// 响应里的 `truncated` 表示触顶）；否则定位到该目录所属账号后往下搜。
+pub(crate) async fn compat_fs_search(
+    State(st): State<AppState>,
+    Json(req): Json<CompatSearchReq>,
+) -> Response {
+    let kw = req.keywords.trim().to_string();
+    if kw.is_empty() {
+        return compat_err("搜索关键词为空", 400);
+    }
+    let parent = normalize_path(&req.parent);
+    // 搜索根：(账号 id, 根 fid, 虚拟根路径)
+    let roots: Vec<(String, String, String)> = if parent == "/" {
+        let data = st.store.data.lock().unwrap();
+        data.accounts
+            .iter()
+            .map(|a| (a.id.clone(), a.root_fid.clone(), format!("/{}", a.name)))
+            .collect()
+    } else {
+        match st.resolve_write_dir(&parent).await {
+            Ok((acc_id, fid)) => vec![(acc_id, fid, parent.clone())],
+            Err(e) => return compat_err(e, 500),
+        }
+    };
+    // scope=2 只收文件；目录命中与否都要下钻（scan_dir 的 include_dirs 只管命中项）
+    let include_dirs = req.scope != 2;
+    let mut hits: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    for (acc_id, root_fid, root_path) in roots {
+        match crate::search::search_tree(
+            &st,
+            &acc_id,
+            &root_fid,
+            &root_path,
+            &kw,
+            COMPAT_SEARCH_DEPTH,
+            include_dirs,
+            crate::search::SEARCH_MAX_HITS,
+            crate::search::SEARCH_MAX_DIRS,
+        )
+        .await
+        {
+            Ok(out) => {
+                truncated |= out.truncated;
+                hits.extend(out.hits);
+            }
+            Err(e) => return compat_err(e, 500),
+        }
+    }
+    if req.scope == 1 {
+        hits.retain(|h| h.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+    // 稳定排序（父目录 + 名字小写）；客户端自己还会再排一次
+    hits.sort_by_key(|h| {
+        (
+            h.get("parent_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            h.get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase(),
+        )
+    });
+    let total = hits.len() as i64;
+    // 分页与 /api/fs/list 同口径：page 从 1 起，per_page<=0 返回全部
+    let per_page = if req.per_page <= 0 {
+        total.max(1)
+    } else {
+        req.per_page
+    };
+    let page = if req.page <= 0 { 1 } else { req.page };
+    let start = (((page - 1) * per_page).clamp(0, total)) as usize;
+    let end = ((page * per_page).clamp(0, total)) as usize;
+    let content = search_content(&hits[start..end]);
+    (
+        StatusCode::OK,
+        Json(json!({
+            "code": 200,
+            "message": "success",
+            "data": { "content": content, "total": total, "truncated": truncated }
+        })),
+    )
+        .into_response()
+}
+
+/// BFS 命中条目（`Entry` 原字段 + path/parent_path/parent_fid）→ 上游 `SearchResp` 形状
+fn search_content(hits: &[Value]) -> Vec<Value> {
+    hits.iter()
+        .map(|h| {
+            let name = h
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let is_dir = h.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false);
+            json!({
+                "parent": h.get("parent_path").and_then(|v| v.as_str()).unwrap_or("/"),
+                "name": name,
+                "is_dir": is_dir,
+                "size": h.get("size").and_then(|v| v.as_u64()).unwrap_or(0),
+                "type": obj_type(&name, is_dir),
+            })
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -1131,5 +1319,53 @@ mod tests {
         assert_eq!(obj_type("a.md", false), T_TEXT);
         assert_eq!(obj_type("a.bin", false), T_UNKNOWN);
         assert_eq!(obj_type("noext", false), T_UNKNOWN);
+    }
+
+    /// modified/created 绝不能是 null：虚拟根（账号条目）与不设 updated_at 的驱动都会走到这里。
+    /// AList 客户端（xlist 等）首页/目录页默认按时间排序，取 `modified!` —— 收到 null 会抛
+    /// `Null check operator used on a null value`，被 onInit 的 catch 吞掉后整页空白无提示。
+    #[test]
+    fn obj_resp_modified_is_never_null() {
+        let e = Entry {
+            name: "tmplocal".into(),
+            is_dir: true,
+            ..Default::default()
+        };
+        let v = obj_resp_json(&e, "/tmplocal", b"secret");
+        assert!(v["modified"].is_string(), "modified 不能是 null");
+        assert_eq!(v["modified"], v["created"]);
+        assert_eq!(v["modified"], "1970-01-01T08:00:00+08:00"); // 无 mtime 的占位（unix 0）
+        assert_eq!(v["sign"], ""); // 目录无链接签名
+
+        // 有 mtime 时格式不变
+        let e2 = Entry {
+            name: "a.txt".into(),
+            size: 6,
+            updated_at: Some(1_700_000_000_000),
+            ..Default::default()
+        };
+        let v2 = obj_resp_json(&e2, "/acc/a.txt", b"secret");
+        assert_eq!(v2["modified"], "2023-11-15T06:13:20+08:00");
+        assert!(v2["sign"].as_str().unwrap().contains(':'));
+    }
+
+    /// /api/fs/search 的条目形状是 `SearchNode + type`，与 FsList 的 content 形状不同：
+    /// 客户端按 name/parent/is_dir/size 取字段，多带 BFS 私有字段没用还容易混淆
+    #[test]
+    fn search_content_matches_alist_shape() {
+        let hits = vec![
+            json!({"name": "a.txt", "is_dir": false, "size": 6, "parent_path": "/acc", "path": "/acc/a.txt", "fid": "x"}),
+            json!({"name": "子目录", "is_dir": true, "size": 0, "parent_path": "/acc"}),
+        ];
+        let out = search_content(&hits);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["parent"], "/acc");
+        assert_eq!(out[0]["name"], "a.txt");
+        assert_eq!(out[0]["is_dir"], false);
+        assert_eq!(out[0]["size"], 6);
+        assert_eq!(out[0]["type"], T_TEXT); // 4
+        assert_eq!(out[1]["type"], T_FOLDER); // 1
+        assert!(out[0].get("parent_path").is_none());
+        assert!(out[0].get("path").is_none());
     }
 }

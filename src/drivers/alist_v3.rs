@@ -227,7 +227,10 @@ impl AlistV3 {
                 name,
                 size: if is_dir { 0 } else { size },
                 is_dir,
-                updated_at: None,
+                // 上游 Go 版把 `modified` 映射进 Obj.Modified（drivers/alist_v3/driver.go:99）；
+                // 漏了这步挂载盘的所有条目都没时间：面板/客户端显示 1970，
+                // 且 AList 客户端按时间排序时会因 null 抛错（整页空白）。
+                updated_at: modified_ms(&f),
                 etag: None,
                 s3_key_flag: None,
                 file_type: None,
@@ -419,6 +422,14 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
+/// 上游条目 JSON 的 `modified`（RFC3339，如 `2025-12-20T21:42:03+08:00`）→ unix 毫秒。
+/// 缺失/为 null/格式不认识时返回 None（由兼容层兜成 1970 占位，绝不发 null）。
+fn modified_ms(f: &Value) -> Option<i64> {
+    f.get("modified")
+        .and_then(|m| m.as_str())
+        .and_then(super::aliyundrive_open::iso_to_ms)
+}
+
 fn urlencoding_path(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -430,4 +441,23 @@ fn urlencoding_path(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modified_ms_parses_upstream_rfc3339() {
+        // 上游 /api/fs/list 的真实形状（东八区偏移）
+        let f = json!({ "name": "a.mp3", "modified": "2025-12-20T21:42:03+08:00" });
+        assert_eq!(modified_ms(&f), Some(1_766_238_123_000));
+        // 带毫秒的 UTC
+        let f = json!({ "modified": "2024-01-02T03:04:05.000Z" });
+        assert_eq!(modified_ms(&f), Some(1_704_164_645_000));
+        // 缺失 / null / 空串都不 panic，返回 None（兼容层再兜 1970 占位）
+        assert_eq!(modified_ms(&json!({ "name": "a" })), None);
+        assert_eq!(modified_ms(&json!({ "modified": null })), None);
+        assert_eq!(modified_ms(&json!({ "modified": "" })), None);
+    }
 }
