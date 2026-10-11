@@ -31,7 +31,7 @@ hmac = "0.13"
 sha2 = "0.11"
 async-trait = "0.1"
 # SSH/SFTP：russh 0.63（自带 keys 模块，不再需要 russh-keys / ssh-key 直接依赖）
-russh = "0.63"
+russh = "0.64"
 russh-sftp = "3"
 # 持久化：redb 嵌入式 KV 库（单文件），账号数据 AES-256-GCM 加密后落盘
 redb = "4"
