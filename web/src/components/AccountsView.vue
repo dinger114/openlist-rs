@@ -619,7 +619,16 @@
               <span>元信息密码</span>
               <input class="input" v-model="form.meta_password" placeholder="目录加密密码，可选" />
             </label>
-            <p class="hint-text">挂载另一套 AList / OpenList。优先 Token；否则用用户名密码登录。</p>
+            <label class="field">
+              <span>Cookie（可选）</span>
+              <textarea class="input" rows="3" v-model="form.cookie"
+                placeholder="过 Cloudflare 挑战用，如 cf_clearance=...；留空则不发 Cookie"></textarea>
+            </label>
+            <label class="field">
+              <span>User-Agent（可选）</span>
+              <input class="input" v-model="form.ua" placeholder="必须与签发上面 Cookie 的浏览器一致" />
+            </label>
+            <p class="hint-text">挂载另一套 AList / OpenList。优先 Token；否则用用户名密码登录。站点带 Cloudflare 挑战时，Cookie 与 User-Agent 必须成对填（cf_clearance 与 UA 绑定，只填一个无效）。</p>
           </template>
 
           <template v-else-if="form.driver === 'github_releases'">
@@ -1050,6 +1059,7 @@ const form = reactive({
   share_name: '',
   meta_password: '',
   token: '',
+  ua: '',
   repo_structure: '',
   show_all_version: false,
   show_source_code: false,
@@ -1089,6 +1099,7 @@ function resetForm() {
   form.driver = 'quark'
   form.name = ''
   form.cookie = ''
+  form.ua = ''
   form.username = ''
   form.password = ''
   form.refresh_token = ''
@@ -1143,6 +1154,7 @@ async function startEdit(account) {
   form.driver = account.driver
   form.name = account.name
   form.cookie = ''
+  form.ua = ''
   form.username = ''
   form.password = ''
   form.refresh_token = ''
@@ -1204,6 +1216,7 @@ async function startEdit(account) {
     form.address = secret.address ?? ''
     form.share_name = secret.share_name ?? ''
     form.meta_password = secret.meta_password ?? ''
+    form.ua = secret.ua ?? ''
     form.token = secret.token ?? ''
     form.repo_structure = secret.repo_structure ?? ''
     form.show_all_version = secret.show_all_version ?? false

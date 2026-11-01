@@ -22,7 +22,24 @@ pub struct AlistV3 {
     username: String,
     password: String,
     token: Mutex<String>,
+    /// 可选：随每个请求发送的 Cookie 串（过 Cloudflare `cf_clearance` 这类挑战）
+    cookie: String,
+    /// 实际生效的 User-Agent。取直链时服务器侧要复用它 —— `cf_clearance` 与 UA 绑定，
+    /// 中转请求换了 UA 同样会被判挑战。
+    ua: String,
     http: Client,
+}
+
+/// 洗掉用户可能连前缀一起粘进来的 `Cookie:`，只留 `k=v; k2=v2`。
+fn normalize_cookie(raw: &str) -> String {
+    let mut s = raw.trim();
+    for p in ["Cookie:", "cookie:", "COOKIE:"] {
+        if let Some(rest) = s.strip_prefix(p) {
+            s = rest.trim();
+            break;
+        }
+    }
+    s.to_string()
 }
 
 impl AlistV3 {
@@ -33,17 +50,60 @@ impl AlistV3 {
         password: String,
         token: String,
     ) -> Self {
+        Self::with_ua_cookie(
+            address,
+            meta_password,
+            username,
+            password,
+            token,
+            String::new(),
+            String::new(),
+        )
+    }
+
+    /// 带自定义 UA / Cookie 的构造（`alist_v3` 用它；`openlist` 仍走 `new`）。
+    ///
+    /// **UA 与 Cookie 必须成对给**：前置 Cloudflare 的 `cf_clearance` 与签发时的 UA 绑定，
+    /// 只给 cookie 而 UA 用驱动默认值 → 直接判挑战页（实测同一枚 clearance 配默认 UA 回 403）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_ua_cookie(
+        address: String,
+        meta_password: String,
+        username: String,
+        password: String,
+        token: String,
+        ua: String,
+        cookie: String,
+    ) -> Self {
         let address = address.trim().trim_end_matches('/').to_string();
+        let ua = match ua.trim() {
+            "" => USER_AGENT.to_string(),
+            other => other.to_string(),
+        };
+        let cookie = normalize_cookie(&cookie);
+        let mut builder = Client::builder().user_agent(ua.as_str());
+        if !cookie.is_empty() {
+            // 浏览器等价：Cookie 之外还得补 `Referer`。前置 Cloudflare 的 WAF 规则对
+            // `/api/*` 要求带 Referer，缺了直接回「Sorry, you have been blocked」（实测同一枚
+            // cookie + UA，只去掉 Referer 就被拦；补上即 200，与本机 TLS 指纹无关）。
+            let mut h = reqwest::header::HeaderMap::new();
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&cookie) {
+                h.insert(reqwest::header::COOKIE, v);
+            }
+            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("{address}/")) {
+                h.insert(reqwest::header::REFERER, v);
+            }
+            builder = builder.default_headers(h);
+        }
         AlistV3 {
             address,
             meta_password,
             username,
             password,
             token: Mutex::new(token),
-            http: Client::builder()
-                .user_agent(USER_AGENT)
-                .build()
-                .unwrap_or_else(|_| Client::new()),
+            cookie,
+            ua,
+            http: builder.build().unwrap_or_else(|_| Client::new()),
         }
     }
 
@@ -263,9 +323,18 @@ impl AlistV3 {
         if url.is_empty() {
             return Err("AList 未返回 raw_url".into());
         }
+        // 服务器侧中转（面板预览的 `proxy=true`、账号级「服务器代理」开关）会带上
+        // `info.headers` 去拉上游；有 Cookie 的站点必须把 UA 一起带上 ——
+        // `cf_clearance` 与签发时的 UA 绑定，缺了 UA 一样判挑战页。
+        let mut headers = Vec::new();
+        if !self.cookie.is_empty() {
+            headers.push(("Cookie".to_string(), self.cookie.clone()));
+            headers.push(("User-Agent".to_string(), self.ua.clone()));
+            headers.push(("Referer".to_string(), format!("{}/", self.address)));
+        }
         Ok(DownloadInfo {
             url,
-            headers: vec![],
+            headers,
             proxy: false,
             local_path: None,
         })
@@ -459,5 +528,46 @@ mod tests {
         assert_eq!(modified_ms(&json!({ "name": "a" })), None);
         assert_eq!(modified_ms(&json!({ "modified": null })), None);
         assert_eq!(modified_ms(&json!({ "modified": "" })), None);
+    }
+
+    #[test]
+    fn ua_and_cookie_are_pairwise_optional() {
+        // 都不填 → 保持原行为：驱动默认浏览器化 UA、不发 Cookie
+        let d = AlistV3::new(
+            "https://x.example/".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+        assert_eq!(d.address, "https://x.example");
+        assert_eq!(d.ua, super::USER_AGENT);
+        assert!(d.cookie.is_empty());
+
+        // 只填 UA → cookie 仍空；填的 UA 原样生效（尾斜杠也被吃掉）
+        let d = AlistV3::with_ua_cookie(
+            "https://x.example".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            "UA-vendor".into(),
+            String::new(),
+        );
+        assert_eq!(d.ua, "UA-vendor");
+        assert!(d.cookie.is_empty());
+
+        // 用户把 `Cookie: ` 前缀一起粘进来要能洗掉；空白 UA 回落到默认值
+        let d = AlistV3::with_ua_cookie(
+            "https://x.example".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            "   ".into(),
+            "Cookie: cf_clearance=abc; _ga=1".into(),
+        );
+        assert_eq!(d.ua, super::USER_AGENT);
+        assert_eq!(d.cookie, "cf_clearance=abc; _ga=1");
     }
 }

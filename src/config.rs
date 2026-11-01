@@ -202,6 +202,13 @@ pub enum Credential {
         password: String,
         #[serde(default)]
         token: String,
+        /// 可选：随每个请求发送的 Cookie 串（用于过 Cloudflare `cf_clearance` 这类挑战）
+        #[serde(default)]
+        cookie: String,
+        /// 可选：自定义 User-Agent。**必须与签发上面那枚 Cookie 的浏览器一致**
+        /// （`cf_clearance` 与 UA 绑定，换 UA 立刻失效）；留空用驱动默认浏览器化 UA。
+        #[serde(default)]
+        ua: String,
     },
     /// GitHub Releases（只读）
     GithubReleases {

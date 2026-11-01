@@ -454,6 +454,8 @@ async function addAccount(form) {
       payload.password = form.password || undefined
       payload.token = form.token || undefined
       payload.meta_password = form.meta_password || undefined
+      payload.cookie = form.cookie || undefined
+      payload.ua = form.ua || undefined
     } else if (d === 'github_releases') {
       payload.repo_structure = form.repo_structure
       payload.token = form.token || undefined
@@ -692,6 +694,8 @@ async function editAccount(form) {
       payload.password = form.password || undefined
       payload.token = form.token || undefined
       payload.meta_password = form.meta_password || undefined
+      payload.cookie = form.cookie || undefined
+      payload.ua = form.ua || undefined
     } else if (d === 'github_releases') {
       payload.repo_structure = form.repo_structure
       payload.token = form.token || undefined
