@@ -57,6 +57,9 @@
       </div>
     </section>
 
+    <!-- API 令牌（OpenList 式静态凭据，供 ostrm / AList 客户端 / WebDAV 使用） -->
+    <ApiTokenCard />
+
     <!-- WebDAV 入口（地址 / 认证 / 挂载方式） -->
     <WebdavCard :username="username" />
   </div>
@@ -65,6 +68,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import Icon from './Icon.vue'
+import ApiTokenCard from './ApiTokenCard.vue'
 import WebdavCard from './WebdavCard.vue'
 
 const emit = defineEmits(['saved'])
