@@ -312,3 +312,16 @@ pub(crate) async fn reset_api_token(
         .map(|token| Json(json!({ "token": token })))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))
 }
+
+/// POST /api/web/sign-key/reset —— 重置直链签名盐。
+///
+/// 所有已发出的 `?sign=` 链接（含已生成 STRM 里的 URL）立即失效，需要重跑任务重写。
+/// 与 API 令牌解耦：重置令牌不动直链，重置直链也不影响任何客户端登录。
+pub(crate) async fn reset_sign_key(
+    State(st): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    st.store
+        .reset_sign_nonce()
+        .map(|_| Json(json!({ "ok": true })))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))
+}

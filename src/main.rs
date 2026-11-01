@@ -131,6 +131,8 @@ async fn main() {
         // API 令牌（OpenList 式静态凭据，供 ostrm / AList 客户端 / WebDAV 使用）
         .route("/api/web/token", get(auth::get_api_token))
         .route("/api/web/token/reset", post(auth::reset_api_token))
+        // 直链签名盐：重置后所有已发出的 ?sign= 链接失效（与令牌解耦）
+        .route("/api/web/sign-key/reset", post(auth::reset_sign_key))
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
         .route("/api/me", get(compat::compat_me))

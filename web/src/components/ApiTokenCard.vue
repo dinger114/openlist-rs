@@ -38,6 +38,26 @@
         令牌等同于管理员权限：泄漏后请立刻重置，并同步更新 ostrm 等已保存它的客户端。
         重置不影响已登录的面板会话，也不影响已生成的 <code class="tok-code">?sign=</code> 直链。
       </p>
+
+      <div class="tok-divider"></div>
+
+      <div class="tok-field">
+        <label>直链签名密钥</label>
+        <div class="tok-row">
+          <span class="hint-text tok-signhint">
+            <code class="tok-code">/d</code> 与 <code class="tok-code">/p</code> 的
+            <code class="tok-code">?sign=</code> 由数据目录密钥派生
+          </span>
+          <button class="btn btn-danger btn-sm" :disabled="signResetting" @click="resetSignKey">
+            <Icon name="refresh" :size="14" />{{ signResetting ? '重置中…' : '重置直链签名' }}
+          </button>
+        </div>
+      </div>
+      <p class="hint-text">
+        重置后所有已发出的直链立即失效（含已生成 STRM 里的 URL），需要重跑生成任务重写；
+        已登录的面板会话与已保存的 API 令牌都不受影响。
+      </p>
+      <p v-if="signNotice" class="alert alert-ok">{{ signNotice }}</p>
     </div>
   </section>
 </template>
@@ -50,6 +70,8 @@ const token = ref('')
 const revealed = ref(false)
 const copied = ref(false)
 const resetting = ref(false)
+const signResetting = ref(false)
+const signNotice = ref('')
 const error = ref('')
 
 // 遮罩态只露前缀与末 4 位，足够核对、不够泄漏
@@ -120,6 +142,31 @@ async function reset() {
     resetting.value = false
   }
 }
+
+/**
+ * 重置直链签名盐：让所有已发出的 `?sign=` 链接立即作废。
+ * 与重置 API 令牌互不影响 —— 令牌不动直链，直链也不动令牌。
+ */
+async function resetSignKey() {
+  const ok = window.confirm(
+    '确定重置直链签名密钥？\n\n所有已发出的 ?sign= 直链会立即失效，' +
+      '已经生成好的 STRM 文件里的播放链接也会全部打不开，需要重跑任务重写。'
+  )
+  if (!ok) return
+  error.value = ''
+  signNotice.value = ''
+  signResetting.value = true
+  try {
+    const r = await fetch('/api/web/sign-key/reset', { method: 'POST' })
+    const b = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(b.error || '重置失败')
+    signNotice.value = '已重置，请重跑生成任务以重写 STRM 里的播放链接。'
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    signResetting.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -188,5 +235,24 @@ async function reset() {
 }
 .tok-warn {
   color: var(--ol-text-dim);
+}
+
+/* 令牌与直链签名两小节之间的分隔 */
+.tok-divider {
+  height: 1px;
+  background: var(--ol-border);
+  margin: 18px 0 16px;
+}
+.tok-signhint {
+  flex: 1;
+  min-width: 220px;
+  margin: 0;
+}
+
+/* 重置成功的提示（全局只有 alert-error，成功态在这里补） */
+.alert-ok {
+  background: var(--ol-primary-light);
+  color: var(--ol-primary);
+  border: 1px solid var(--ol-primary);
 }
 </style>
