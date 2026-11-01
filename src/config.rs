@@ -638,6 +638,10 @@ pub struct Config {
     /// 以 `Authorization: <token>` 直接调用 /api/fs/*、/api/me 等端点。
     #[serde(default)]
     pub api_token: Option<String>,
+    /// 直链签名密钥的盐（None/空 = 与引入该字段之前完全一致，存量直链不失效）。
+    /// 重置后所有已发出的 `?sign=` 链接立即失效；与 api_token 互不影响。
+    #[serde(default)]
+    pub sign_nonce: Option<String>,
 }
 
 /// 文件条目（驱动无关的统一模型）
@@ -683,6 +687,10 @@ pub struct Store {
     db: Database,
     key: [u8; KEY_LEN],
     pub data: Mutex<Config>,
+    /// 派生的直链签名密钥缓存（由存储密钥 + `Config::sign_nonce` 派生）。
+    /// 单独一把锁：`sign_secret()` 在下载校验的热路径上，不能去抢 `data` 的锁 ——
+    /// 有调用点本身就持着 `data` 锁，混用会死锁。
+    sign_key: std::sync::RwLock<[u8; KEY_LEN]>,
 }
 
 impl Store {
@@ -716,16 +724,35 @@ impl Store {
             None => import_legacy(&dir).unwrap_or_default(),
         };
 
+        let sign_key = crate::sign::sign_secret_with_nonce(
+            &key,
+            data.sign_nonce.as_deref().unwrap_or_default(),
+        );
         Store {
             db,
             key,
             data: Mutex::new(data),
+            sign_key: std::sync::RwLock::new(sign_key),
         }
     }
 
-    /// 下载链接签名密钥：由存储密钥域分离派生（见 src/sign.rs）
+    /// 下载链接签名密钥：存储密钥 + 盐域分离派生（见 src/sign.rs）。
+    /// 走缓存，不在热路径上重算 HMAC，也不碰 `data` 锁。
     pub(crate) fn sign_secret(&self) -> [u8; 32] {
-        crate::sign::sign_secret(&self.key)
+        *self.sign_key.read().unwrap()
+    }
+
+    /// 重置签名盐：所有已发出的 `?sign=` 直链立即失效（已生成的 STRM 需要重跑）。
+    ///
+    /// 与 API 令牌解耦 —— 重置令牌不会踢掉直链，重置盐也不会影响任何客户端登录。
+    pub fn reset_sign_nonce(&self) -> std::io::Result<()> {
+        let nonce = crate::token::generate();
+        let sign_key = crate::sign::sign_secret_with_nonce(&self.key, &nonce);
+        // 锁顺序固定：先写密钥缓存（短锁，不与 data 交错），再落库
+        *self.sign_key.write().unwrap() = sign_key;
+        let mut data = self.data.lock().unwrap();
+        data.sign_nonce = Some(nonce);
+        self.save(&data)
     }
 
     pub fn save(&self, cfg: &Config) -> std::io::Result<()> {
@@ -1048,5 +1075,39 @@ mod tests {
             assert_eq!(meta.permissions().mode() & 0o777, 0o600);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 签名盐：默认空（与旧算法一致）→ 重置后换密钥 → 重开数据库仍用新盐
+    #[test]
+    fn sign_nonce_reset_rotates_key_and_persists() {
+        let dir = std::env::temp_dir().join(format!("ol-rs-sign-nonce-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_s = dir.to_string_lossy().to_string();
+
+        let legacy = crate::sign::sign_secret_with_nonce(&load_or_create_key(&dir), "");
+        {
+            let store = Store::load(&dir_s);
+            // 新库没有盐：签名密钥必须等于「不带盐」的旧算法（存量直链不失效）
+            assert_eq!(store.sign_secret(), legacy);
+
+            store.reset_sign_nonce().unwrap();
+            assert_ne!(store.sign_secret(), legacy);
+        }
+        // 重开库：盐已落盘，密钥沿用（否则每次重启都会悄悄作废所有直链）
+        let reopened = Store::load(&dir_s);
+        assert_ne!(reopened.sign_secret(), legacy);
+        assert_eq!(
+            reopened
+                .data
+                .lock()
+                .unwrap()
+                .sign_nonce
+                .clone()
+                .unwrap()
+                .len(),
+            "openlist-".len() + 36 + 1 + 64
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

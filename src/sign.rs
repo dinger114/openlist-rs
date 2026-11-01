@@ -16,12 +16,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// 由数据目录的存储密钥派生签名密钥：`HMAC(store_key, "openlist-rs/sign")`。
+/// 由数据目录的存储密钥派生签名密钥：`HMAC(store_key, "openlist-rs/sign" + nonce)`。
 ///
 /// 做域分离，避免把 AES 存储密钥直接当 HMAC 密钥复用同一用途；也不需要新增配置项。
-pub(crate) fn sign_secret(store_key: &[u8]) -> [u8; 32] {
+///
+/// `nonce` 是「可选盐」：为空时结果与引入该参数之前**逐字节相同**，所以存量部署
+/// 已生成的直链不会失效。面板里重置签名盐即可让所有已发出的 `?sign=` 链接作废
+/// （等价于 Go 版重置 token 的副作用，但这里与 API 令牌解耦，互不牵连）。
+pub(crate) fn sign_secret_with_nonce(store_key: &[u8], nonce: &str) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(store_key).expect("HMAC 接受任意长度密钥");
     mac.update(b"openlist-rs/sign");
+    mac.update(nonce.as_bytes());
     mac.finalize().into_bytes().into()
 }
 
@@ -200,15 +205,49 @@ mod tests {
     fn sign_secret_is_derived_and_stable() {
         let k1 = [1u8; 32];
         let k2 = [2u8; 32];
-        assert_eq!(sign_secret(&k1), sign_secret(&k1));
-        assert_ne!(sign_secret(&k1), sign_secret(&k2));
-        assert_ne!(sign_secret(&k1).to_vec(), k1.to_vec());
+        assert_eq!(
+            sign_secret_with_nonce(&k1, ""),
+            sign_secret_with_nonce(&k1, "")
+        );
+        assert_ne!(
+            sign_secret_with_nonce(&k1, ""),
+            sign_secret_with_nonce(&k2, "")
+        );
+        assert_ne!(sign_secret_with_nonce(&k1, "").to_vec(), k1.to_vec());
         // 派生结果与手算 HMAC 一致（换实现也要保持同一密钥）
-        assert_eq!(sign_secret(&k1), {
+        assert_eq!(sign_secret_with_nonce(&k1, ""), {
             let mut mac = HmacSha256::new_from_slice(&k1).unwrap();
             mac.update(b"openlist-rs/sign");
             let out: [u8; 32] = mac.finalize().into_bytes().into();
             out
         });
+    }
+
+    /// 空盐必须与「引入盐之前」的算法逐字节相同 —— 存量部署的直链不能因为加了参数就失效。
+    /// 这里把旧算法写在测试里当参照实现，生产代码只留带盐版本。
+    #[test]
+    fn empty_nonce_keeps_legacy_secret() {
+        let k = [7u8; 32];
+        let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+        mac.update(b"openlist-rs/sign");
+        let legacy: [u8; 32] = mac.finalize().into_bytes().into();
+        assert_eq!(sign_secret_with_nonce(&k, ""), legacy);
+    }
+
+    /// 不同盐派生出不同密钥：重置盐之后，旧盐签出的链接必须验不过
+    #[test]
+    fn nonce_changes_secret_and_invalidates_old_signatures() {
+        let k = [7u8; 32];
+        let old = sign_secret_with_nonce(&k, "salt-1");
+        let new = sign_secret_with_nonce(&k, "salt-2");
+        assert_ne!(old, new);
+
+        let signed = sign("/acc/a.mp4", 0, &old);
+        assert_eq!(verify("/acc/a.mp4", &signed, &old), Ok(()));
+        assert_eq!(
+            verify("/acc/a.mp4", &signed, &new),
+            Err(SignError::SignInvalid),
+            "换盐后旧链接必须失效"
+        );
     }
 }
