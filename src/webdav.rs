@@ -135,7 +135,7 @@ fn basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
     Some((user.to_string(), pass.to_string()))
 }
 
-/// Basic（面板账号）或 Bearer（面板会话 token）鉴权；失败返回已构造好的响应
+/// Basic（面板账号）或 Bearer（静态 API 令牌 / 面板会话）鉴权；失败返回已构造好的响应
 async fn authorize(
     st: &AppState,
     ip: std::net::IpAddr,
@@ -152,9 +152,9 @@ async fn authorize(
         ));
     }
 
-    // Bearer：面板会话 token（与 /d、/p 的会话鉴权同一套）
+    // Bearer：静态 API 令牌或面板会话 token（与 /d、/p 的鉴权同一套）
     if let Some(token) = crate::auth::token_from_headers(headers) {
-        if st.session_valid(&token) {
+        if st.credential_valid(&token) {
             return Ok(());
         }
     }

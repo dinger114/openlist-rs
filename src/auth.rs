@@ -24,8 +24,11 @@ pub(crate) async fn auth_guard(
         && path != "/api/auth/status"
     {
         let token = extract_token(&req);
-        // 会话校验带 TTL 与滑动续期（见 state::SESSION_TTL）；过期条目会被顺手删除
-        let valid = token.as_ref().map(|t| st.session_valid(t)).unwrap_or(false);
+        // 静态 API 令牌（不过期，见 src/token.rs）或面板会话（带 TTL 与滑动续期）
+        let valid = token
+            .as_ref()
+            .map(|t| st.credential_valid(t))
+            .unwrap_or(false);
         if !valid {
             // OpenList 协议客户端（/api/fs/*、/api/me）习惯 HTTP200 + code 包装；
             // 自有面板 API 保持标准 HTTP 401。
@@ -288,4 +291,24 @@ pub(crate) async fn update_web_settings(
     // 改密码后所有会话失效（含别的端点）
     st.clear_sessions();
     Ok(Json(json!({ "ok": true })))
+}
+
+/// GET /api/web/token —— 设置页展示当前 API 令牌。
+///
+/// 落在 `auth_guard` 之后，只有面板会话或令牌本身能读到；令牌等价管理员权限，
+/// 所以不放进任何公开接口，也不出现在启动日志里（除首次生成那一次）。
+pub(crate) async fn get_api_token(State(st): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "token": st.api_token() }))
+}
+
+/// POST /api/web/token/reset —— 重置 API 令牌，旧令牌立即失效。
+///
+/// 不动会话表：令牌与面板会话是两套凭据，重置令牌不该把当前用户踢下线。
+/// 也不影响直链签名（`?sign=` 的密钥由存储密钥派生，见 src/sign.rs）。
+pub(crate) async fn reset_api_token(
+    State(st): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    st.reset_api_token()
+        .map(|token| Json(json!({ "token": token })))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))
 }

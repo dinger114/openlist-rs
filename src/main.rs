@@ -10,6 +10,7 @@ mod ratelimit;
 mod search;
 mod sign;
 mod state;
+mod token;
 mod webdav;
 
 use axum::{
@@ -127,6 +128,9 @@ async fn main() {
         // 面板账号设置（设置页）
         .route("/api/web/user", get(auth::get_web_user))
         .route("/api/web/settings", post(auth::update_web_settings))
+        // API 令牌（OpenList 式静态凭据，供 ostrm / AList 客户端 / WebDAV 使用）
+        .route("/api/web/token", get(auth::get_api_token))
+        .route("/api/web/token/reset", post(auth::reset_api_token))
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
         .route("/api/me", get(compat::compat_me))

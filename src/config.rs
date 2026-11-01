@@ -633,6 +633,11 @@ pub struct Config {
     /// 面板登录密码（None/空 = 首次启动时随机生成并打印到终端）
     #[serde(default)]
     pub web_pass: Option<String>,
+    /// OpenList 式静态管理员令牌（None/空 = 启动时生成并打印到终端）。
+    /// 与面板会话 token 的区别：不过期、重启不失效，供 ostrm / AList 协议客户端
+    /// 以 `Authorization: <token>` 直接调用 /api/fs/*、/api/me 等端点。
+    #[serde(default)]
+    pub api_token: Option<String>,
 }
 
 /// 文件条目（驱动无关的统一模型）
@@ -765,6 +770,16 @@ impl Store {
         }
         if pass.is_some() {
             data.web_pass = pass;
+        }
+        self.save(&data)
+    }
+
+    /// 更新 OpenList 式静态 API 令牌（None = 保持原值），加密持久化到数据库。
+    /// 令牌是「生成即打印一次」的凭据，调用方负责把明文同步到内存（见 state::AuthCfg）。
+    pub fn update_api_token(&self, token: Option<String>) -> std::io::Result<()> {
+        let mut data = self.data.lock().unwrap();
+        if token.is_some() {
+            data.api_token = token;
         }
         self.save(&data)
     }

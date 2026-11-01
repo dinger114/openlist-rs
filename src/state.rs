@@ -63,6 +63,8 @@ pub(crate) struct AuthCfg {
     pub(crate) user: String,
     /// argon2id 的 PHC 串（老库的明文会在启动或首次登录时就地升级，见 src/password.rs）
     pub(crate) pass: String,
+    /// OpenList 式静态 API 令牌（见 src/token.rs）：不过期，供 ostrm / AList 客户端用
+    pub(crate) token: String,
 }
 
 /// 随机 8 位密码（去除易混淆字符的字母 + 数字）
@@ -118,7 +120,25 @@ fn init_web_auth(store: &Store) -> AuthCfg {
     AuthCfg {
         user: user.unwrap(),
         pass: pass.unwrap(),
+        token: init_api_token(store),
     }
+}
+
+/// 静态 API 令牌初始化：库里已有则直接使用（不打印）；缺失时生成并打印一次。
+///
+/// 与面板密码同样的「只在首次生成时打印明文」策略：令牌是长期有效的管理员凭据，
+/// 之后要拿只能在面板设置页看（那里有遮罩 + 复制）。
+fn init_api_token(store: &Store) -> String {
+    let existing = store.data.lock().unwrap().api_token.clone();
+    if let Some(t) = existing.filter(|s| !s.is_empty()) {
+        return t;
+    }
+    let token = crate::token::generate();
+    println!("API 令牌未设置，已生成（供 ostrm / 第三方客户端使用）: {token}");
+    if let Err(e) = store.update_api_token(Some(token.clone())) {
+        eprintln!("API 令牌持久化失败: {e}");
+    }
+    token
 }
 
 /// 会话记录：只存最后使用时间（TTL 与滑动续期见 SESSION_TTL / session_valid_at）
@@ -195,6 +215,37 @@ impl AppState {
         let d = Arc::new(Driver::new(&id, &cred, self.store.clone()).await?);
         self.drivers.lock().unwrap().insert(id, d.clone());
         Ok(d)
+    }
+
+    // ---------- 静态 API 令牌 ----------
+
+    /// 当前令牌（设置页展示用；明文只发给已登录的面板会话）
+    pub(crate) fn api_token(&self) -> String {
+        self.auth.read().unwrap().token.clone()
+    }
+
+    /// 校验静态令牌（常量时间；空值不通过）
+    pub(crate) fn api_token_valid(&self, presented: &str) -> bool {
+        let expected = self.auth.read().unwrap().token.clone();
+        crate::token::matches(&expected, presented)
+    }
+
+    /// 请求凭据是否有效：静态令牌**或**面板会话。
+    ///
+    /// 三个入口共用这一个判断 —— /api/* 的 auth_guard、/d /p 的下载鉴权、
+    /// WebDAV 的 Bearer（见 webdav.rs）。先比令牌再查会话：会话校验带滑动续期，
+    /// 不能让静态令牌去改会话表。
+    pub(crate) fn credential_valid(&self, presented: &str) -> bool {
+        self.api_token_valid(presented) || self.session_valid(presented)
+    }
+
+    /// 重置静态令牌：落库 + 同步内存，返回新令牌。
+    /// 已签发的面板会话不受影响（令牌只用于免登录调用 API）。
+    pub(crate) fn reset_api_token(&self) -> std::io::Result<String> {
+        let token = crate::token::generate();
+        self.store.update_api_token(Some(token.clone()))?;
+        self.auth.write().unwrap().token = token.clone();
+        Ok(token)
     }
 
     // ---------- 会话（TTL + 滑动续期） ----------
@@ -343,5 +394,53 @@ mod tests {
         // 库里也必须是哈希（不是只在内存里换了）
         let in_db = st.store.data.lock().unwrap().web_pass.clone().unwrap();
         assert_eq!(in_db, stored);
+    }
+
+    /// 令牌首次启动生成、重启后沿用同一个（不重新生成），且落库
+    #[test]
+    fn api_token_is_generated_once_and_persisted() {
+        let dir = std::env::temp_dir().join(format!("olrs-state-token-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dir_s = dir.to_string_lossy().to_string();
+
+        let first = AppState::new(&dir_s).api_token();
+        assert!(first.starts_with("openlist-"), "令牌格式不对: {first}");
+
+        // 第二次启动（同一个数据目录）必须沿用，不能换新
+        let second = AppState::new(&dir_s).api_token();
+        assert_eq!(first, second, "重启不应重新生成令牌");
+    }
+
+    /// 静态令牌与面板会话等价：两者都算有效凭据，空串与错误值都不行
+    #[test]
+    fn credential_valid_accepts_token_or_session() {
+        let st = temp_state("cred");
+        let token = st.api_token();
+        assert!(st.credential_valid(&token), "静态令牌应通过");
+        assert!(!st.credential_valid(""), "空串绝不能通过");
+        assert!(!st.credential_valid("openlist-wrong"), "错误令牌不该通过");
+
+        st.issue_session("sess".into());
+        assert!(st.credential_valid("sess"), "面板会话应通过");
+        assert!(st.credential_valid(&token), "两者互不影响");
+    }
+
+    /// 重置令牌：新值生效、旧值立刻失效、落库同步、不动已有会话
+    #[test]
+    fn reset_api_token_invalidates_old_value() {
+        let st = temp_state("token-reset");
+        let old = st.api_token();
+        st.issue_session("sess".into());
+
+        let new = st.reset_api_token().unwrap();
+        assert_ne!(old, new);
+        assert_eq!(st.api_token(), new);
+        assert!(!st.credential_valid(&old), "旧令牌必须立刻失效");
+        assert!(st.credential_valid(&new));
+        // 重置令牌不该把面板会话踢下线
+        assert!(st.credential_valid("sess"), "会话不受令牌重置影响");
+
+        let in_db = st.store.data.lock().unwrap().api_token.clone().unwrap();
+        assert_eq!(in_db, new, "新令牌必须落库");
     }
 }
