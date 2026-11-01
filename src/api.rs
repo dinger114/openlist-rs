@@ -297,6 +297,9 @@ pub(crate) struct AddAccountReq {
     meta_password: Option<String>,
     #[serde(default)]
     token: Option<String>,
+    /// 自定义 User-Agent（alist_v3：与下面 cookie 里的 `cf_clearance` 必须成对）
+    #[serde(default)]
+    ua: Option<String>,
     // github_releases
     #[serde(default)]
     repo_structure: Option<String>,
@@ -809,6 +812,8 @@ pub(crate) async fn add_account(
                     username: req.username.clone().unwrap_or_default(),
                     password: req.password.clone().unwrap_or_default(),
                     token: req.token.clone().unwrap_or_default(),
+                    cookie: req.cookie.clone().unwrap_or_default(),
+                    ua: req.ua.clone().unwrap_or_default(),
                 },
             )
         }
@@ -1668,6 +1673,8 @@ pub(crate) async fn get_account_secret(
             username,
             password,
             token,
+            cookie,
+            ua,
         } => {
             out["driver"] = json!("alist_v3");
             out["url"] = json!(url);
@@ -1675,6 +1682,8 @@ pub(crate) async fn get_account_secret(
             out["username"] = json!(username);
             out["password"] = json!(password);
             out["token"] = json!(token);
+            out["cookie"] = json!(cookie);
+            out["ua"] = json!(ua);
         }
         Credential::GithubReleases {
             repo_structure,
@@ -3065,6 +3074,8 @@ pub(crate) async fn edit_account(
                     username: req.username.clone().unwrap_or_default(),
                     password: req.password.clone().unwrap_or_default(),
                     token: req.token.clone().unwrap_or_default(),
+                    cookie: req.cookie.clone().unwrap_or_default(),
+                    ua: req.ua.clone().unwrap_or_default(),
                 },
             )
         }

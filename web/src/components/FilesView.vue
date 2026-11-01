@@ -764,15 +764,32 @@ watch(
     }
     textLoading.value = true
     fetch(p._url)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      .then(async (r) => {
+        if (!r.ok) {
+          // 上游/中转非 2xx 时把真实原因带出来（如网盘配额超限），
+          // 别一律报「直链跨域」—— 那是 fetch 自身抛 TypeError 才有的情况。
+          let detail = ''
+          try {
+            const body = await r.text()
+            try {
+              const j = JSON.parse(body)
+              detail = j?.error?.message || j?.message || j?.error?.code || ''
+            } catch {
+              detail = body.slice(0, 120)
+            }
+          } catch {}
+          throw new Error(`HTTP ${r.status}${detail ? '：' + String(detail).slice(0, 160) : ''}`)
+        }
         return r.text()
       })
       .then((t) => {
         textContent.value = t
       })
-      .catch(() => {
-        textError.value = '无法加载文本内容（直链跨域或网络失败）'
+      .catch((ex) => {
+        textError.value =
+          ex instanceof TypeError
+            ? '无法加载文本内容（网络失败或跨域被拦）'
+            : `无法加载文本内容（${ex?.message || '未知错误'}）`
       })
       .finally(() => {
         textLoading.value = false

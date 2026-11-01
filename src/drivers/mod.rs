@@ -387,12 +387,16 @@ impl Driver {
                 username,
                 password,
                 token,
-            } => Driver::AlistV3(alist_v3::AlistV3::new(
+                cookie,
+                ua,
+            } => Driver::AlistV3(alist_v3::AlistV3::with_ua_cookie(
                 url.clone(),
                 meta_password.clone(),
                 username.clone(),
                 password.clone(),
                 token.clone(),
+                ua.clone(),
+                cookie.clone(),
             )),
             Credential::GithubReleases {
                 repo_structure,
