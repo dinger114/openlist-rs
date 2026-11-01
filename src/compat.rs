@@ -705,8 +705,8 @@ fn authorize_download(
         return Ok(());
     }
     if let Some(token) = crate::auth::token_from_headers(headers) {
-        // 会话带 TTL 与滑动续期（见 state::SESSION_TTL）
-        if st.session_valid(&token) {
+        // 静态 API 令牌或面板会话，二者其一有效即可（见 AppState::credential_valid）
+        if st.credential_valid(&token) {
             return Ok(());
         }
     }
