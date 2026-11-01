@@ -145,8 +145,14 @@ async fn main() {
         .route("/api/fs/move", post(compat::compat_fs_move))
         .route("/api/fs/copy", post(compat::compat_fs_copy))
         .route("/api/fs/remove", post(compat::compat_fs_remove))
-        .route("/api/fs/put", post(compat::compat_fs_put))
-        .route("/api/fs/form", post(compat::compat_fs_form))
+        .route(
+            "/api/fs/put",
+            post(compat::compat_fs_put).put(compat::compat_fs_put),
+        )
+        .route(
+            "/api/fs/form",
+            post(compat::compat_fs_form).put(compat::compat_fs_form),
+        )
         .route("/api/fs/put/progress", get(compat::compat_fs_put_progress))
         // 原生离线下载（供应商侧任务，见 src/offline.rs）
         .route("/api/offline/tools", get(api::offline_tools))
