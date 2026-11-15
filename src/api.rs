@@ -283,6 +283,9 @@ pub(crate) struct AddAccountReq {
     passphrase: Option<String>,
     #[serde(default)]
     ignore_symlink_error: Option<bool>,
+    /// SFTP 主机公钥指纹（SHA256:base64）。空 = TOFU 首连自动记录；非空 = 钉扎。
+    #[serde(default)]
+    host_key_fingerprint: Option<String>,
     // ftp
     #[serde(default)]
     encoding: Option<String>,
@@ -738,6 +741,11 @@ pub(crate) async fn add_account(
                     passphrase: req.passphrase.clone().unwrap_or_default(),
                     root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
                     ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                    // 新增/编辑账号时由 TOFU 首连自动写入；也允许前端显式钉扎
+                    host_key_fingerprint: req
+                        .host_key_fingerprint
+                        .clone()
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -1627,6 +1635,7 @@ pub(crate) async fn get_account_secret(
             passphrase,
             root_path,
             ignore_symlink_error,
+            host_key_fingerprint,
         } => {
             out["driver"] = json!("sftp");
             out["address"] = json!(address);
@@ -1636,6 +1645,7 @@ pub(crate) async fn get_account_secret(
             out["passphrase"] = json!(passphrase);
             out["root_path"] = json!(root_path);
             out["ignore_symlink_error"] = json!(ignore_symlink_error);
+            out["host_key_fingerprint"] = json!(host_key_fingerprint);
         }
         Credential::Ftp {
             address,
@@ -3000,6 +3010,11 @@ pub(crate) async fn edit_account(
                     passphrase: req.passphrase.clone().unwrap_or_default(),
                     root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
                     ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                    // 新增/编辑账号时由 TOFU 首连自动写入；也允许前端显式钉扎
+                    host_key_fingerprint: req
+                        .host_key_fingerprint
+                        .clone()
+                        .unwrap_or_default(),
                 },
             )
         }

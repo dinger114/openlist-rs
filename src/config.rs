@@ -167,6 +167,10 @@ pub enum Credential {
         root_path: String,
         #[serde(default)]
         ignore_symlink_error: bool,
+        /// 首次连接记录的主机公钥指纹（`SHA256:base64`）。
+        /// 空 = 尚未 TOFU，首连信任并写入；非空 = 钉扎，不匹配即拒绝（防中间人）。
+        #[serde(default)]
+        host_key_fingerprint: String,
     },
     /// FTP
     Ftp {

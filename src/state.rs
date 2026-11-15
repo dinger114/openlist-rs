@@ -292,6 +292,17 @@ impl AppState {
         self.sessions.lock().unwrap().clear();
     }
 
+    /// 从当前 store.data 重建内存鉴权态（恢复备份后调用）。
+    ///
+    /// 所有鉴权路径读的都是内存副本 `self.auth`，恢复备份只写库不刷新内存的话，
+    /// 服务会继续按**旧凭据**放行登录与 API 调用，而接口却返回成功并清空了会话。
+    /// 这里复用 `init_web_auth`：它同时完成「明文口令强制转 argon2id 并回写」的
+    /// 哈希收口，避免恢复路径绕过 `update_web_auth` 把明文写回库。
+    pub(crate) fn reload_auth(&self) {
+        let cfg = init_web_auth(&self.store);
+        *self.auth.write().unwrap() = cfg;
+    }
+
     /// 清扫过期会话，返回清掉的条数（后台定期调用；校验路径上是惰性过期）
     pub(crate) fn sweep_sessions(&self) -> usize {
         let now = Instant::now();
@@ -442,5 +453,44 @@ mod tests {
 
         let in_db = st.store.data.lock().unwrap().api_token.clone().unwrap();
         assert_eq!(in_db, new, "新令牌必须落库");
+    }
+
+    /// 恢复备份后 reload_auth 必须把库里的新凭据同步到内存（H-3 的回归测试）。
+    #[test]
+    fn reload_auth_syncs_memory_from_store() {
+        let st = temp_state("reload-auth");
+        let old_user = st.auth.read().unwrap().user.clone();
+        let old_pass = st.auth.read().unwrap().pass.clone();
+
+        // 模拟恢复备份：直接改库（绕过 update_web_auth），写明文口令
+        {
+            let mut data = st.store.data.lock().unwrap();
+            data.web_user = Some("restored-admin".into());
+            data.web_pass = Some("plaintext-from-old-backup".into());
+            data.api_token = Some("openlist-restored-token".into());
+        }
+
+        st.reload_auth();
+
+        {
+            let auth = st.auth.read().unwrap();
+            assert_eq!(auth.user, "restored-admin", "内存用户名必须同步");
+            assert_ne!(auth.pass, old_pass, "内存口令哈希必须同步");
+            assert_eq!(auth.token, "openlist-restored-token", "内存令牌必须同步");
+            // 哈希收口：内存里必须是 PHC 串，不能是恢复进来的明文
+            assert!(
+                crate::password::is_hashed(&auth.pass),
+                "恢复的明文口令必须被强制哈希，实际: {}",
+                auth.pass
+            );
+        }
+        assert_ne!(old_user, st.auth.read().unwrap().user);
+
+        // 收口同时要回写数据库：库里也不能留明文
+        let in_db = st.store.data.lock().unwrap().web_pass.clone().unwrap();
+        assert!(
+            crate::password::is_hashed(&in_db),
+            "数据库里的口令也必须是哈希"
+        );
     }
 }

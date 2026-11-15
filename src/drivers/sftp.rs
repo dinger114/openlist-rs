@@ -3,9 +3,9 @@
 //! 基于 russh + russh-sftp：列表 / 下载流 / 建目录 / 重命名 / 移动 / 删除 / 上传。
 
 use super::{DownloadInfo, PutInput};
-use crate::config::Entry;
+use crate::config::{Entry, Store};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct Sftp {
@@ -16,33 +16,75 @@ pub struct Sftp {
     passphrase: String,
     root_path: String,
     ignore_symlink_error: bool,
+    /// 配置中已钉扎的主机公钥指纹（空 = TOFU 首次连接）
+    host_key_fingerprint: String,
+    /// 首连观测到的指纹回写用；None = 无持久化通道（如单测/CLI）
+    store: Option<Arc<Store>>,
+    account_id: String,
 }
 
-struct Handler;
+/// SSH 主机密钥校验回调。
+///
+/// 旧实现无条件 `Ok(true)`，等于跳过 SSH 的服务器身份认证 —— 任何能劫持路由/DNS
+/// 的攻击者都可伪装成 SFTP 服务器拿到网盘凭据。现在实现 TOFU：
+/// 首次连接信任并记录指纹，之后不匹配即拒绝（钉扎）。
+struct Handler {
+    /// 期望指纹（None = 首次连接，信任并记录）
+    expected: Option<String>,
+    /// 本次握手观测到的指纹，连接成功后回写配置
+    observed: Arc<Mutex<Option<String>>>,
+}
 
-// russh 0.63：Handler 的 check_server_key 改用原生 async fn（trait 里声明的是
-// -> impl Future + Send），不再需要 #[async_trait]；参数类型是 PublicKeyOrCertificate
+impl Handler {
+    /// 指纹比对（抽出来便于单测）
+    fn key_matches(expected: Option<&str>, observed: &str) -> bool {
+        match expected {
+            Some(want) if !want.is_empty() => want == observed,
+            _ => true, // TOFU 首次：信任
+        }
+    }
+}
+
 impl russh::client::Handler for Handler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKeyOrCertificate,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let fp = server_public_key
+            .public_key()
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string();
+        *self.observed.lock().unwrap() = Some(fp.clone());
+        Ok(Self::key_matches(self.expected.as_deref(), &fp))
     }
 }
 
+/// SFTP 驱动构造参数（字段较多，打包成结构体避免 clippy too_many_arguments）
+pub struct SftpConfig {
+    pub address: String,
+    pub username: String,
+    pub password: String,
+    pub private_key: String,
+    pub passphrase: String,
+    pub root_path: String,
+    pub ignore_symlink_error: bool,
+    pub host_key_fingerprint: String,
+}
+
 impl Sftp {
-    pub fn new(
-        address: String,
-        username: String,
-        password: String,
-        private_key: String,
-        passphrase: String,
-        root_path: String,
-        ignore_symlink_error: bool,
-    ) -> Self {
+    pub fn new(cfg: SftpConfig, store: Option<Arc<Store>>, account_id: String) -> Self {
+        let SftpConfig {
+            address,
+            username,
+            password,
+            private_key,
+            passphrase,
+            root_path,
+            ignore_symlink_error,
+            host_key_fingerprint,
+        } = cfg;
         let mut address = address.trim().to_string();
         if !address.contains(':') {
             address = format!("{address}:22");
@@ -60,6 +102,9 @@ impl Sftp {
             passphrase,
             root_path,
             ignore_symlink_error,
+            host_key_fingerprint: host_key_fingerprint.trim().to_string(),
+            store,
+            account_id,
         }
     }
 
@@ -90,9 +135,45 @@ impl Sftp {
     {
         let config = russh::client::Config::default();
         let config = Arc::new(config);
-        let mut session = russh::client::connect(config, self.address.as_str(), Handler)
+        let observed = Arc::new(Mutex::new(None));
+        let handler = Handler {
+            expected: if self.host_key_fingerprint.is_empty() {
+                None
+            } else {
+                Some(self.host_key_fingerprint.clone())
+            },
+            observed: observed.clone(),
+        };
+        let mut session = russh::client::connect(config, self.address.as_str(), handler)
             .await
-            .map_err(|e| format!("SSH 连接失败 {}: {e}", self.address))?;
+            .map_err(|e| {
+                let seen = observed.lock().unwrap().clone();
+                match (self.host_key_fingerprint.is_empty(), seen) {
+                    // 钉扎态下握手失败且已观测到指纹 → 明确告诉管理员是主机密钥变了
+                    (false, Some(fp)) => format!(
+                        "SSH 连接失败 {}: {e}（主机密钥不匹配，实际指纹 {fp}。\
+                         若确认服务端换过密钥，请在账号设置里清空 host_key_fingerprint 重新信任）",
+                        self.address
+                    ),
+                    _ => format!("SSH 连接失败 {}: {e}", self.address),
+                }
+            })?;
+
+        // TOFU：首次连接（配置里没有指纹）握手成功 → 把观测到的指纹写回配置。
+        // 写库失败不阻断本次连接（否则首连永远失败），但会在日志里留下痕迹。
+        if self.host_key_fingerprint.is_empty() {
+            if let (Some(st), Some(fp)) = (&self.store, observed.lock().unwrap().clone()) {
+                let id = self.account_id.clone();
+                st.update_credential(&id, |cred| {
+                    if let crate::config::Credential::Sftp {
+                        host_key_fingerprint, ..
+                    } = cred
+                    {
+                        *host_key_fingerprint = fp;
+                    }
+                });
+            }
+        }
 
         // russh 0.63: authenticate_* 返回 AuthResult，用 .success() 取布尔
         let auth_ok = if !self.private_key.trim().is_empty() {
@@ -423,5 +504,32 @@ fn entry_from(root: &str, parent: &str, name: &str, is_dir: bool, size: u64) -> 
         s3_key_flag: None,
         file_type: None,
         extra: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Handler;
+
+    /// TOFU 首次（无期望指纹）→ 信任
+    #[test]
+    fn tofu_trusts_first_seen_key() {
+        assert!(Handler::key_matches(None, "SHA256:abc"));
+        assert!(Handler::key_matches(Some(""), "SHA256:abc"));
+    }
+
+    /// 已钉扎 → 指纹一致才放行
+    #[test]
+    fn pinned_key_must_match_exactly() {
+        assert!(Handler::key_matches(Some("SHA256:abc"), "SHA256:abc"));
+        assert!(!Handler::key_matches(Some("SHA256:abc"), "SHA256:xyz"));
+    }
+
+    /// 中间人换钥场景：钉扎的指纹与实际不符 → 拒绝
+    #[test]
+    fn mitm_different_key_rejected() {
+        let pinned = "SHA256:uU8Z0m2vUx1Pz0F0kZ0w6c3n8s5r2q9t4b7y1e0a3d6g";
+        let attacker = "SHA256:AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLL";
+        assert!(!Handler::key_matches(Some(pinned), attacker));
     }
 }
