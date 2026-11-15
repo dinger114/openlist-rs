@@ -348,8 +348,8 @@ async function doLogin() {
       const b = await r.json().catch(() => ({}))
       throw new Error(b.error || '登录失败')
     }
-    // 记住账号（对齐官方：勾选时把用户名/密码写入 localStorage）
-    loginViewRef.value?.saveRemember(loginForm.value.username, loginForm.value.password)
+    // 记住账号：只存用户名（口令不落 localStorage，见 LoginView 注释）
+    loginViewRef.value?.saveRemember(loginForm.value.username)
     needLogin.value = false
     loginForm.value = { username: '', password: '' }
     await loadAccounts()
@@ -371,7 +371,8 @@ function onSettingsSaved() {
 }
 
 async function fetchAccountSecret(id) {
-  return api(`/api/accounts/${id}/secret`)
+  // POST：凭据明细不进浏览器缓存 / 反代日志（后端也带 Cache-Control: no-store）
+  return api(`/api/accounts/${id}/secret`, { method: 'POST' })
 }
 
 async function loadAccounts() {

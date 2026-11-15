@@ -14,13 +14,15 @@ use rand::RngExt;
 use std::io;
 
 const MAGIC: &[u8; 4] = b"OLBK";
-const VERSION: u8 = 1;
+/// 新建备份写 v2（argon2id KDF）；v1 是旧的 SHA256×2001 弱 KDF，仅保留读取兼容
+const VERSION: u8 = 2;
+const LEGACY_VERSION: u8 = 1;
 const FLAG_ENCRYPTED: u8 = 0x01;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
-/// 多轮 SHA256 迭代次数：足够慢以抵抗暴力破解，足够快不影响日常使用
-const KDF_ITERATIONS: u32 = 2000;
+/// 旧版（v1）多轮 SHA256 迭代次数，仅用于读老备份
+const LEGACY_KDF_ITERATIONS: u32 = 2000;
 
 /// 创建备份文件字节。
 ///
@@ -61,7 +63,7 @@ pub fn parse_backup(blob: &[u8], password: Option<&str>) -> Result<Config, Strin
         return Err("不是有效的备份文件（magic 不匹配）".into());
     }
     let version = blob[4];
-    if version != VERSION {
+    if version != VERSION && version != LEGACY_VERSION {
         return Err(format!("不支持的备份版本: {version}"));
     }
     let flags = blob[5];
@@ -80,7 +82,7 @@ pub fn parse_backup(blob: &[u8], password: Option<&str>) -> Result<Config, Strin
         if pw.is_empty() {
             return Err("密码不能为空".into());
         }
-        let plain = decrypt_with_password(pw, salt, nonce, ciphertext)?;
+        let plain = decrypt_with_password(pw, salt, nonce, ciphertext, version)?;
         serde_json::from_slice::<Config>(&plain).map_err(|e| format!("备份数据解析失败: {e}"))
     } else {
         if password.is_some() {
@@ -103,7 +105,7 @@ fn encrypt_with_password(
     rand::rng().fill(&mut salt);
     rand::rng().fill(&mut nonce);
 
-    let key = derive_key(password, &salt);
+    let key = derive_key(password, &salt)?;
     let cipher = Aes256Gcm::new(&key.into());
     let nonce_ref: &Nonce<_> = (&nonce).into();
     let ct = cipher
@@ -118,8 +120,13 @@ fn decrypt_with_password(
     salt: &[u8],
     nonce: &[u8],
     ct: &[u8],
+    version: u8,
 ) -> Result<Vec<u8>, String> {
-    let key = derive_key(password, salt);
+    let key = if version == LEGACY_VERSION {
+        derive_key_legacy(password, salt)
+    } else {
+        derive_key(password, salt)?
+    };
     let cipher = Aes256Gcm::new(&key.into());
     let nonce_ref: &Nonce<_> = nonce
         .try_into()
@@ -129,8 +136,23 @@ fn decrypt_with_password(
         .map_err(|_| "密码错误或数据损坏".to_string())
 }
 
-/// 多轮 SHA256 密钥派生（password + salt → 32 字节 AES 密钥）
-fn derive_key(password: &str, salt: &[u8]) -> [u8; KEY_LEN] {
+/// argon2id 密钥派生（v2）：password + salt → 32 字节 AES 密钥。
+///
+/// 与 src/password.rs 同一套参数（m=19MiB、t=2、p=1）。备份文件包含全部网盘
+/// Cookie / refresh_token / 面板口令哈希，等价于整个服务的凭据库，必须用
+/// 内存硬的 KDF 抵抗 GPU 离线爆破 —— 旧版 SHA256×2001 轮已废弃。
+fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], String> {
+    use argon2::Argon2;
+
+    let mut key = [0u8; KEY_LEN];
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .map_err(|e| format!("备份密钥派生失败: {e}"))?;
+    Ok(key)
+}
+
+/// 旧版（v1）多轮 SHA256 密钥派生 —— 仅用于读取历史备份，不得用于新加密。
+fn derive_key_legacy(password: &str, salt: &[u8]) -> [u8; KEY_LEN] {
     use sha2::{Digest, Sha256};
 
     let mut input = Vec::with_capacity(password.len() + salt.len());
@@ -139,7 +161,7 @@ fn derive_key(password: &str, salt: &[u8]) -> [u8; KEY_LEN] {
 
     let mut result = Sha256::digest(&input);
 
-    for _ in 0..KDF_ITERATIONS {
+    for _ in 0..LEGACY_KDF_ITERATIONS {
         let mut hasher = Sha256::new();
         hasher.update(result);
         hasher.update(password.as_bytes());
@@ -244,7 +266,9 @@ pub(crate) async fn restore_backup_handler(
             };
             match save_result {
                 Ok(()) => {
-                    // 配置已变更，清空全部会话
+                    // 配置已变更：重建内存鉴权态（含明文口令→argon2id 的哈希收口），
+                    // 再清空全部会话。不刷新内存的话服务会继续按旧凭据放行。
+                    st.reload_auth();
                     st.clear_sessions();
                     (
                         StatusCode::OK,
@@ -429,22 +453,55 @@ mod tests {
 
     #[test]
     fn test_derive_key_is_deterministic() {
-        let k1 = derive_key("pw", b"salt1234567890");
-        let k2 = derive_key("pw", b"salt1234567890");
+        let k1 = derive_key("pw", b"salt1234567890").unwrap();
+        let k2 = derive_key("pw", b"salt1234567890").unwrap();
         assert_eq!(k1, k2);
     }
 
     #[test]
     fn test_derive_key_differs_for_different_passwords() {
-        let k1 = derive_key("pw1", b"salt1234567890");
-        let k2 = derive_key("pw2", b"salt1234567890");
+        let k1 = derive_key("pw1", b"salt1234567890").unwrap();
+        let k2 = derive_key("pw2", b"salt1234567890").unwrap();
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn test_derive_key_differs_for_different_salts() {
-        let k1 = derive_key("pw", b"salt1234567890");
-        let k2 = derive_key("pw", b"different salt");
+        let k1 = derive_key("pw", b"salt1234567890").unwrap();
+        let k2 = derive_key("pw", b"different salt").unwrap();
         assert_ne!(k1, k2);
+    }
+
+    /// v1 旧备份（弱 KDF）必须仍能读：用 legacy KDF 手工构造 version=1 的 blob
+    #[test]
+    fn test_legacy_v1_backup_still_readable() {
+        let cfg = test_config();
+        let plain = serde_json::to_vec(&cfg).unwrap();
+        let salt = [7u8; SALT_LEN];
+        let nonce = [9u8; NONCE_LEN];
+        let key = derive_key_legacy("old-pw", &salt);
+        let cipher = Aes256Gcm::new(&key.into());
+        let nonce_ref: &Nonce<_> = (&nonce).into();
+        let ct = cipher.encrypt(nonce_ref, plain.as_slice()).unwrap();
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(MAGIC);
+        blob.push(LEGACY_VERSION);
+        blob.push(FLAG_ENCRYPTED);
+        blob.extend_from_slice(&salt);
+        blob.extend_from_slice(&nonce);
+        blob.extend_from_slice(&ct);
+
+        let restored = parse_backup(&blob, Some("old-pw")).unwrap();
+        assert_eq!(restored.accounts.len(), cfg.accounts.len());
+        assert_eq!(restored.web_user, cfg.web_user);
+    }
+
+    /// 新建备份必须是 v2（argon2id）
+    #[test]
+    fn test_new_backup_writes_v2() {
+        let blob = create_backup(&test_config(), Some("pw")).unwrap();
+        assert_eq!(blob[4], VERSION, "新建备份应写 v2");
+        assert_eq!(VERSION, 2);
     }
 }

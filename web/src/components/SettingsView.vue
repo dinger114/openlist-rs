@@ -23,6 +23,16 @@
             />
           </div>
           <div class="field">
+            <label>当前密码</label>
+            <input
+              class="input"
+              type="password"
+              v-model="oldPassword"
+              autocomplete="current-password"
+              placeholder="修改密码时必须填写"
+            />
+          </div>
+          <div class="field">
             <label>新密码</label>
             <input
               class="input"
@@ -157,6 +167,7 @@ const emit = defineEmits(['saved'])
 const username = ref('')
 const password = ref('')
 const confirm = ref('')
+const oldPassword = ref('')
 const error = ref('')
 const saving = ref(false)
 
@@ -263,18 +274,27 @@ async function save() {
     error.value = '两次输入的密码不一致'
     return
   }
+  if (pwd && !oldPassword.value) {
+    error.value = '修改密码需要填写当前密码'
+    return
+  }
   saving.value = true
   try {
     const r = await fetch('/api/web/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user, password: pwd || undefined })
+      body: JSON.stringify({
+        username: user,
+        password: pwd || undefined,
+        old_password: pwd ? oldPassword.value : undefined
+      })
     })
     const b = await r.json().catch(() => ({}))
     if (!r.ok) throw new Error(b.error || '保存失败')
     // 服务端已清空全部会话，回到登录页用新凭据重新登录
     password.value = ''
     confirm.value = ''
+    oldPassword.value = ''
     emit('saved')
   } catch (e) {
     error.value = e.message

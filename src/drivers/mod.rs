@@ -69,7 +69,10 @@ use std::sync::Arc;
 use tokio::io::AsyncRead;
 
 /// 直链信息：url + 抓取该直链所需请求头 + 是否需要代理
-#[derive(Debug, Clone, serde::Serialize)]
+///
+/// `headers` 里常带 Cookie / Authorization，绝不能进日志或错误信息 ——
+/// 所以 `Debug` 手写脱敏（只报条数），`Serialize` 保留（前端 /api/stream 需要真实值）。
+#[derive(Clone, serde::Serialize)]
 pub struct DownloadInfo {
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -80,12 +83,113 @@ pub struct DownloadInfo {
     pub local_path: Option<String>,
 }
 
+impl std::fmt::Debug for DownloadInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DownloadInfo")
+            .field("url", &self.url)
+            .field("headers", &format_args!("<{} 项已脱敏>", self.headers.len()))
+            .field("proxy", &self.proxy)
+            .field("local_path", &self.local_path)
+            .finish()
+    }
+}
+
 /// 上传输入：文件名 + 大小 + 内容流（对齐 Go 版 stream.FileStream 的最小集）
 pub struct PutInput {
     pub name: String,
     pub size: u64,
     /// 上传内容流（/api/fs/put 原始 body 或 /api/fs/form 解出的文件流）
     pub reader: Pin<Box<dyn AsyncRead + Send>>,
+}
+
+/// 上传缓冲预分配的封顶值。
+///
+/// 驱动里常见 `Vec::with_capacity(input.size as usize)`：`size` 来自客户端声明，
+/// 可以是 `u64::MAX` —— 32 位平台会截断，64 位平台直接尝试分配天文数字内存导致
+/// 进程 abort。预分配只是性能优化，封顶不影响正确性（后续 extend 会按需增长）。
+pub(crate) const UPLOAD_PREALLOC_CAP: u64 = 64 * 1024 * 1024;
+
+/// 按客户端声明的大小算一个安全的预分配容量（封顶 UPLOAD_PREALLOC_CAP）。
+pub(crate) fn prealloc_cap(declared: u64) -> usize {
+    declared.min(UPLOAD_PREALLOC_CAP) as usize
+}
+
+/// 把 fid 归一化到 `root` 之下：折叠 `.` / `..` / 多余斜杠，禁止逃出挂载根。
+///
+/// 路径型驱动的 `resolve` 过去直接做字符串拼接，`fid = "../../etc"` 或
+/// `fid = "/abs/path"` 就能越过 `root_path` 读到挂载范围之外的内容。
+/// 面板与兼容层的虚拟路径解析逐段匹配子项，外部请求注入不了 `..`；
+/// 但凭据持有者可以直接构造 fid 参数，属于挂载边界语义被绕过。
+///
+/// 纯词法处理（与 local.rs 的 norm 一致），不解析符号链接。
+pub(crate) fn normalize_fid(root: &str, fid: &str) -> String {
+    let fid = fid.trim();
+    let root_trimmed = root.trim();
+    // 根目录的几种等价写法
+    if fid.is_empty() || fid == "0" || fid == "/" {
+        return if root_trimmed.is_empty() {
+            "/".to_string()
+        } else {
+            root_trimmed.to_string()
+        };
+    }
+
+    // 先折叠 fid 自身的段，绝对/相对都按「相对 root」处理：
+    // 这样 fid="/etc/passwd" 会落到 root/etc/passwd，而不是宿主的 /etc/passwd。
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in fid.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                // 弹到 root 为止，不允许继续往上
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+
+    let root_trimmed = root_trimmed.trim_end_matches('/');
+    if parts.is_empty() {
+        return if root_trimmed.is_empty() {
+            "/".to_string()
+        } else {
+            root_trimmed.to_string()
+        };
+    }
+    let joined = parts.join("/");
+    if root_trimmed.is_empty() {
+        format!("/{joined}")
+    } else {
+        format!("{root_trimmed}/{joined}")
+    }
+}
+
+/// 把绝对路径折叠 `.` / `..` / 多余斜杠（不涉及 root 拼接）。
+///
+/// 供 fid 本身是「服务端绝对路径」的驱动使用（kodbox / cloudreve），
+/// 它们不能像相对路径那样把 root 拼在前面，只能先归一化再校验包含关系。
+pub(crate) fn normalize_abs_path(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in path.trim().split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+
+/// `path` 是否在 `root` 之下（两者都应是 normalize_abs_path 的结果）。
+pub(crate) fn path_under_root(root: &str, path: &str) -> bool {
+    let root = normalize_abs_path(root);
+    let path = normalize_abs_path(path);
+    if root == "/" {
+        return true;
+    }
+    path == root || path.starts_with(&format!("{root}/"))
 }
 
 /// 包装 reader，把已读字节数累加到 progress（上传进度上报）
@@ -344,14 +448,20 @@ impl Driver {
                 passphrase,
                 root_path,
                 ignore_symlink_error,
+                host_key_fingerprint,
             } => Driver::Sftp(sftp::Sftp::new(
-                address.clone(),
-                username.clone(),
-                password.clone(),
-                private_key.clone(),
-                passphrase.clone(),
-                root_path.clone(),
-                *ignore_symlink_error,
+                sftp::SftpConfig {
+                    address: address.clone(),
+                    username: username.clone(),
+                    password: password.clone(),
+                    private_key: private_key.clone(),
+                    passphrase: passphrase.clone(),
+                    root_path: root_path.clone(),
+                    ignore_symlink_error: *ignore_symlink_error,
+                    host_key_fingerprint: host_key_fingerprint.clone(),
+                },
+                Some(store),
+                id.to_string(),
             )),
             Credential::Ftp {
                 address,
@@ -1293,6 +1403,56 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M-5：预分配必须封顶 —— 客户端声明 u64::MAX 时不能直接尝试分配
+    #[test]
+    fn prealloc_cap_is_bounded() {
+        assert_eq!(prealloc_cap(u64::MAX), UPLOAD_PREALLOC_CAP as usize);
+        assert_eq!(prealloc_cap(1024), 1024);
+        assert_eq!(prealloc_cap(0), 0);
+        assert_eq!(prealloc_cap(UPLOAD_PREALLOC_CAP), UPLOAD_PREALLOC_CAP as usize);
+        // 超过封顶一律压到封顶
+        assert_eq!(
+            prealloc_cap(UPLOAD_PREALLOC_CAP + 1),
+            UPLOAD_PREALLOC_CAP as usize
+        );
+    }
+
+    /// M-7：fid 归一化必须折叠 `..` 且不允许逃出挂载根
+    #[test]
+    fn normalize_fid_stays_under_root() {
+        // 根目录的几种写法
+        assert_eq!(normalize_fid("/root", ""), "/root");
+        assert_eq!(normalize_fid("/root", "0"), "/root");
+        assert_eq!(normalize_fid("/root", "/"), "/root");
+        // 正常相对路径
+        assert_eq!(normalize_fid("/root", "a"), "/root/a");
+        assert_eq!(normalize_fid("/root", "a/b"), "/root/a/b");
+        // 折叠多余斜杠与 `.`
+        assert_eq!(normalize_fid("/root", "a//b/./c"), "/root/a/b/c");
+        // 折叠 `..`：弹出到 root 为止，不会继续往上
+        assert_eq!(normalize_fid("/root", "a/../b"), "/root/b");
+        assert_eq!(normalize_fid("/root", "../../etc"), "/root/etc");
+        assert_eq!(normalize_fid("/root", "a/../../../../etc"), "/root/etc");
+        // 以 / 开头的 fid 也按「相对 root」处理，不绕过挂载根
+        assert_eq!(normalize_fid("/root", "/etc/passwd"), "/root/etc/passwd");
+        // root 为空（等价于服务器根）
+        assert_eq!(normalize_fid("", "a/b"), "/a/b");
+        assert_eq!(normalize_fid("", "../../etc"), "/etc");
+    }
+
+    /// M-7：绝对路径型 fid 的包含关系校验
+    #[test]
+    fn path_under_root_checks_prefix() {
+        assert!(path_under_root("/root", "/root"));
+        assert!(path_under_root("/root", "/root/a/b"));
+        assert!(!path_under_root("/root", "/rootx/a"), "前缀相同但不同目录");
+        assert!(!path_under_root("/root", "/etc/passwd"));
+        assert!(path_under_root("/", "/anything"));
+        // normalize_abs_path 折叠 `..`
+        assert_eq!(normalize_abs_path("/root/../etc"), "/etc");
+        assert_eq!(normalize_abs_path("/root/a//b/./c"), "/root/a/b/c");
+    }
 
     /// 回归：ProgressReader 曾经把内层 Pending 当成 EOF —— tokio::fs::File 首次 poll 必 Pending
     /// （读操作交给阻塞池），于是面板上传 /api/fs/form 永远读到 0 字节、交空分块清单。

@@ -167,13 +167,8 @@ impl YandexDisk {
 
     /// fid(绝对路径) → 实际 API 路径（拼上 root_path 前缀）
     fn resolve(&self, fid: &str) -> String {
-        let fid = fid.trim();
-        let sub = if fid.is_empty() || fid == "0" || fid == "/" {
-            "/"
-        } else {
-            fid
-        };
-        join_path(&self.root_path, sub)
+        // 归一化到 root_path 之下（折叠 .. 与多余斜杠，禁止逃出挂载根）
+        super::normalize_fid(&self.root_path, fid)
     }
 
     async fn request(

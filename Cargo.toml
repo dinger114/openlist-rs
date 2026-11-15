@@ -47,6 +47,7 @@ argon2 = "0.6"
 # 结构化日志：替代 eprintln!，输出带时间戳/级别/文件行号的结构化日志
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+encoding_rs = "0.8.44"
 
 [profile.release]
 strip = "symbols"

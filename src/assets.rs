@@ -29,8 +29,9 @@ fn mime_of(path: &str) -> &'static str {
 /// 静态文件 + SPA fallback
 pub(crate) async fn serve_static(req: Request<Body>) -> Response {
     let raw = req.uri().path().trim_start_matches('/');
-    let safe = raw.replace("..", "");
-    let path = if safe.is_empty() { "index.html" } else { &safe };
+    // 无需清洗 `..`：rust-embed 的 Assets::get 是编译期嵌入表的精确键查找，
+    // 不经过文件系统，天然没有穿越面。保留 replace 反而会掩盖真实路径。
+    let path = if raw.is_empty() { "index.html" } else { raw };
     match Assets::get(path) {
         Some(f) => (
             StatusCode::OK,

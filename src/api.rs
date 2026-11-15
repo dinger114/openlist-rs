@@ -5,7 +5,7 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderMap, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -31,7 +31,7 @@ where
 // ---------- 账号管理 ----------
 
 /// 驱动展示名
-pub(crate) fn driver_display_name(kind: &str) -> &'static str {
+fn driver_display_name(kind: &str) -> &'static str {
     match kind {
         "quark" => "夸克网盘",
         "quark_uc" => "UC 网盘",
@@ -75,6 +75,35 @@ pub(crate) fn driver_display_name(kind: &str) -> &'static str {
         "netease_music" => "网易云音乐",
         _ => "网盘",
     }
+}
+
+/// 校验并规范化账号显示名。
+///
+/// 名称会出现在虚拟路径里（`/账号名/子路径`），含 `/` 会让该账号永远无法被寻址；
+/// 重名则让 `resolve_path` 恒命中第一个，第二个账号实际不可访问。
+/// 返回 `Ok(None)` 表示用户没填（调用方回落到驱动默认名）。
+fn validate_account_name(raw: &str) -> Result<Option<String>, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err("账号名称不能包含 / 或 \\（会破坏虚拟路径）".into());
+    }
+    if name == "." || name == ".." {
+        return Err("账号名称不能是 . 或 ..".into());
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("账号名称不能包含控制字符".into());
+    }
+    Ok(Some(name.to_string()))
+}
+
+/// 名称是否已被其他账号占用（`except_id` 用于编辑时排除自身）。
+fn account_name_taken(data: &crate::config::Config, name: &str, except_id: Option<&str>) -> bool {
+    data.accounts
+        .iter()
+        .any(|a| a.name == name && Some(a.id.as_str()) != except_id)
 }
 
 /// 各驱动的默认根目录 fid（对齐 Go 版各驱动 meta.go 的 DefaultRoot）
@@ -283,6 +312,9 @@ pub(crate) struct AddAccountReq {
     passphrase: Option<String>,
     #[serde(default)]
     ignore_symlink_error: Option<bool>,
+    /// SFTP 主机公钥指纹（SHA256:base64）。空 = TOFU 首连自动记录；非空 = 钉扎。
+    #[serde(default)]
+    host_key_fingerprint: Option<String>,
     // ftp
     #[serde(default)]
     encoding: Option<String>,
@@ -738,6 +770,11 @@ pub(crate) async fn add_account(
                     passphrase: req.passphrase.clone().unwrap_or_default(),
                     root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
                     ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                    // 新增/编辑账号时由 TOFU 首连自动写入；也允许前端显式钉扎
+                    host_key_fingerprint: req
+                        .host_key_fingerprint
+                        .clone()
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -1419,13 +1456,22 @@ pub(crate) async fn add_account(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
+    let acc_name = validate_account_name(&req.name)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+        .unwrap_or_else(|| driver_display_name(driver_kind).to_string());
+    {
+        let data = st.store.data.lock().unwrap();
+        if account_name_taken(&data, &acc_name, None) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("账号名称「{acc_name}」已存在，请换一个"),
+            ));
+        }
+    }
+
     let acc = Account {
         id: id.clone(),
-        name: if req.name.trim().is_empty() {
-            driver_display_name(driver_kind).to_string()
-        } else {
-            req.name.trim().to_string()
-        },
+        name: acc_name,
         cred,
         root_fid,
         server_proxy: req.server_proxy,
@@ -1451,14 +1497,17 @@ pub(crate) async fn add_account(
     ))
 }
 
-/// GET /api/accounts/{id}/secret —— 返回该账号的凭据明细，仅用于编辑表单回填
+/// POST /api/accounts/{id}/secret —— 返回该账号的凭据明细，仅用于编辑表单回填
 ///
 /// 注意：此接口会返回 cookie / 密码 / refresh_token 等敏感信息，
 /// 仅应由已登录的面板管理员在编辑账号时调用（受 /api/accounts 路由已有的鉴权保护）。
+///
+/// 用 POST 而非 GET：GET 的响应体容易被浏览器缓存、反代日志与历史记录留存，
+/// 而这里返回的是全量凭据。同时显式 `Cache-Control: no-store` 兜底。
 pub(crate) async fn get_account_secret(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
     let data = st.store.data.lock().unwrap();
     let acc = data
         .accounts
@@ -1627,6 +1676,7 @@ pub(crate) async fn get_account_secret(
             passphrase,
             root_path,
             ignore_symlink_error,
+            host_key_fingerprint,
         } => {
             out["driver"] = json!("sftp");
             out["address"] = json!(address);
@@ -1636,6 +1686,7 @@ pub(crate) async fn get_account_secret(
             out["passphrase"] = json!(passphrase);
             out["root_path"] = json!(root_path);
             out["ignore_symlink_error"] = json!(ignore_symlink_error);
+            out["host_key_fingerprint"] = json!(host_key_fingerprint);
         }
         Credential::Ftp {
             address,
@@ -2047,7 +2098,13 @@ pub(crate) async fn get_account_secret(
         }
     }
 
-    Ok(Json(out))
+    // 凭据明细绝不进浏览器缓存 / 反代日志
+    let mut resp = Json(out).into_response();
+    resp.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(resp)
 }
 
 /// DELETE /api/accounts/{id}
@@ -3000,6 +3057,11 @@ pub(crate) async fn edit_account(
                     passphrase: req.passphrase.clone().unwrap_or_default(),
                     root_path: req.root_path.clone().unwrap_or_else(|| "/".into()),
                     ignore_symlink_error: req.ignore_symlink_error.unwrap_or(false),
+                    // 新增/编辑账号时由 TOFU 首连自动写入；也允许前端显式钉扎
+                    host_key_fingerprint: req
+                        .host_key_fingerprint
+                        .clone()
+                        .unwrap_or_default(),
                 },
             )
         }
@@ -3678,11 +3740,18 @@ pub(crate) async fn edit_account(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    let new_name = if req.name.trim().is_empty() {
-        driver_display_name(driver_kind).to_string()
-    } else {
-        req.name.trim().to_string()
-    };
+    let new_name = validate_account_name(&req.name)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?
+        .unwrap_or_else(|| driver_display_name(driver_kind).to_string());
+    {
+        let data = st.store.data.lock().unwrap();
+        if account_name_taken(&data, &new_name, Some(&id)) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("账号名称「{new_name}」已存在，请换一个"),
+            ));
+        }
+    }
 
     // 原地替换配置，id 保持不变
     {
@@ -4014,5 +4083,47 @@ mod tests {
         // 空文件
         assert_eq!(parse_range("bytes=0-", 0), None);
         assert_eq!(parse_range("bytes=-10", 0), None);
+    }
+
+    /// L-9：账号名校验
+    #[test]
+    fn validate_account_name_rejects_path_separators() {
+        // 空 -> None（调用方回落到驱动默认名）
+        assert_eq!(validate_account_name("").unwrap(), None);
+        assert_eq!(validate_account_name("   ").unwrap(), None);
+        // 正常名
+        assert_eq!(validate_account_name(" 我的网盘 ").unwrap().as_deref(), Some("我的网盘"));
+        // 含分隔符必须拒绝
+        assert!(validate_account_name("a/b").is_err());
+        assert!(validate_account_name("a\\b").is_err());
+        assert!(validate_account_name("..").is_err());
+        assert!(validate_account_name(".").is_err());
+        assert!(validate_account_name("a\tb").is_err(), "控制字符应被拒");
+    }
+
+    /// L-9：重名检测（编辑时排除自身）
+    #[test]
+    fn account_name_taken_detects_duplicates() {
+        use crate::config::{Account, Config, Credential};
+        let mk = |id: &str, name: &str| Account {
+            id: id.into(),
+            name: name.into(),
+            cred: Credential::Local { root_path: "/tmp".into() },
+            root_fid: "0".into(),
+            server_proxy: false,
+            enabled: true,
+        };
+        let cfg = Config {
+            accounts: vec![mk("id1", "网盘A"), mk("id2", "网盘B")],
+            web_user: None,
+            web_pass: None,
+            api_token: None,
+            sign_nonce: None,
+        };
+        assert!(account_name_taken(&cfg, "网盘A", None));
+        assert!(!account_name_taken(&cfg, "网盘C", None));
+        // 编辑自身时不算重名
+        assert!(!account_name_taken(&cfg, "网盘A", Some("id1")));
+        assert!(account_name_taken(&cfg, "网盘A", Some("id2")));
     }
 }

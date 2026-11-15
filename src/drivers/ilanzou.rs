@@ -578,7 +578,7 @@ impl Ilanzou {
     pub async fn put(&self, dst_dir_fid: &str, mut input: PutInput) -> Result<(), String> {
         use tokio::io::AsyncReadExt;
         let folder_id = self.resolve(dst_dir_fid);
-        let mut buf = Vec::with_capacity(input.size as usize);
+        let mut buf = Vec::with_capacity(super::prealloc_cap(input.size));
         let mut tmp = vec![0u8; 64 * 1024];
         loop {
             let n = input

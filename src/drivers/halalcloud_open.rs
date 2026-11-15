@@ -617,12 +617,12 @@ impl HalalcloudOpen {
             )
             .await?;
         let task = UploadTask::from_json(&v)?;
-        eprintln!(
+        tracing::debug!(
             "[halalcloud 上传] {new_path} ({size} 字节) 建任务: created={} task={} block_size={} codec={:#x} hash={:#x} upload_address={}",
             task.created, task.task, task.block_size, task.block_codec, task.block_hash_type, task.upload_address
         );
         if task.created {
-            eprintln!("[halalcloud 上传] {new_path} 服务端已有同内容文件，秒传完成");
+            tracing::info!("[halalcloud 上传] {new_path} 服务端已有同内容文件，秒传完成");
             return Ok(());
         }
         if task.task.is_empty() || task.upload_address.is_empty() {
@@ -663,7 +663,7 @@ impl HalalcloudOpen {
         }
 
         let created = self.make_file(&task, &slices).await?;
-        eprintln!(
+        tracing::info!(
             "[halalcloud 上传] {new_path} 完成: {} 个分块, identity={}",
             slices.len(),
             created
@@ -693,14 +693,14 @@ impl HalalcloudOpen {
         for attempt in 0..UPLOAD_RETRY_TIMES {
             match self.try_post_file_slice(&url, data).await {
                 Ok(()) => {
-                    eprintln!(
+                    tracing::debug!(
                         "[halalcloud 上传] 分块 #{index} 成功: {} 字节 cid={cid}",
                         data.len()
                     );
                     return Ok(cid);
                 }
                 Err(e) => {
-                    eprintln!(
+                    tracing::warn!(
                         "[halalcloud 上传] 分块 #{index} 第 {} 次失败 (可重试={}): {}",
                         attempt + 1,
                         e.retryable,
@@ -780,7 +780,7 @@ impl HalalcloudOpen {
             match self.try_make_file(&url, slices).await {
                 Ok(v) => return Ok(v),
                 Err(e) => {
-                    eprintln!(
+                    tracing::warn!(
                         "[halalcloud 上传] 收尾第 {} 次失败 (可重试={}): {}",
                         attempt + 1,
                         e.retryable,
