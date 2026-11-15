@@ -174,7 +174,7 @@
             <div v-else-if="textError" class="state-box">
               <Icon name="alert" :size="30" />
               <span>{{ textError }}</span>
-              <a :href="preview._url" target="_blank" class="btn btn-secondary" rel="noopener">在新窗口打开</a>
+              <a :href="preview._url" target="_blank" class="btn btn-secondary" rel="noopener noreferrer">在新窗口打开</a>
             </div>
             <div v-else class="text-editor">
               <div class="text-gutter" aria-hidden="true">
@@ -193,7 +193,7 @@
             <div v-else-if="textError" class="state-box">
               <Icon name="alert" :size="30" />
               <span>{{ textError }}</span>
-              <a :href="preview._url" target="_blank" class="btn btn-secondary" rel="noopener">在新窗口打开</a>
+              <a :href="preview._url" target="_blank" class="btn btn-secondary" rel="noopener noreferrer">在新窗口打开</a>
             </div>
             <div v-else-if="mdSource" class="text-editor">
               <div class="text-gutter" aria-hidden="true">
@@ -676,7 +676,8 @@ function openExternal(p) {
   const durl = absoluteUrl()
   const name = props.preview.name
   const url = p.scheme
-    .replace('$name', name)
+    // $name 进的是外部播放器的 scheme/URL，必须编码（文件名可能含 & # ? 空格）
+    .replace('$name', encodeURIComponent(name))
     .replace(/\$[eb_]*durl/g, (m) => applyMods(m.slice(1).replace('durl', ''), durl))
     .replace(/\$[eb_]*url/g, (m) => applyMods(m.slice(1).replace('url', ''), durl))
   window.location.href = url

@@ -38,6 +38,43 @@ async fn fallback_handler(req: axum::extract::Request) -> Response {
     assets::serve_static(req).await
 }
 
+/// 最小安全响应头（纵深防御）。
+///
+/// - `X-Content-Type-Options: nosniff`：阻止浏览器把上传的文件猜成 HTML/JS 执行。
+/// - `X-Frame-Options: DENY` + `frame-ancestors 'none'`：防点击劫持。
+/// - `Referrer-Policy`：跨站时不泄漏面板路径。
+/// - CSP：面板是 Vue SPA（内联脚本由构建产物产生，故允许 'unsafe-inline'），
+///   但禁止外部脚本源与 object/frame 嵌入，作为 v-html 渲染的兜底。
+async fn security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    let h = axum::http::header::HeaderName::from_static;
+    headers.insert(h("x-content-type-options"), axum::http::HeaderValue::from_static("nosniff"));
+    headers.insert(h("x-frame-options"), axum::http::HeaderValue::from_static("DENY"));
+    headers.insert(
+        h("referrer-policy"),
+        axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    headers.insert(
+        h("content-security-policy"),
+        axum::http::HeaderValue::from_static(
+            "default-src 'self'; \
+             img-src 'self' data: blob: https:; \
+             media-src 'self' blob: https:; \
+             style-src 'self' 'unsafe-inline'; \
+             script-src 'self' 'unsafe-inline'; \
+             connect-src 'self'; \
+             frame-ancestors 'none'; \
+             object-src 'none'; \
+             base-uri 'self'",
+        ),
+    );
+    resp
+}
+
 // ---------- CLI ----------
 
 #[derive(Parser, Debug)]
@@ -124,7 +161,8 @@ async fn main() {
             "/api/accounts/{id}/enabled",
             patch(api::patch_account_enabled),
         )
-        .route("/api/accounts/{id}/secret", get(api::get_account_secret))
+        // 凭据明细用 POST：GET 响应体易被浏览器缓存与反代日志留存
+        .route("/api/accounts/{id}/secret", post(api::get_account_secret))
         .route("/api/files", get(api::list_files))
         .route("/api/search", get(api::search_files))
         .route("/api/download", get(api::get_download))
@@ -195,6 +233,8 @@ async fn main() {
             state.clone(),
             auth::auth_guard,
         ))
+        // 安全响应头放在最外层（后注册的 layer 在外层），确保 401/404 也带
+        .layer(axum::middleware::from_fn(security_headers))
         .fallback(fallback_handler)
         .with_state(state);
 

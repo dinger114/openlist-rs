@@ -42,6 +42,29 @@ const CMD_ADD_CHANNEL: i64 = 247122;
 /// 上传块大小（对齐 SDK blockSize 1MB）
 const UPLOAD_BLOCK_SIZE: u64 = 1024 * 1024;
 
+/// 单飞刷新闸门：`Drop` 时自动复位，panic / 提前 return 都不会把标志卡在 true。
+struct RefreshGuard<'a> {
+    flag: &'a std::sync::Mutex<bool>,
+}
+
+impl<'a> RefreshGuard<'a> {
+    /// 抢占刷新权；已有其他任务在刷时返回 None（调用方直接放弃本次刷新）。
+    fn acquire(flag: &'a std::sync::Mutex<bool>) -> Option<Self> {
+        let mut held = flag.lock().unwrap();
+        if *held {
+            return None;
+        }
+        *held = true;
+        Some(RefreshGuard { flag })
+    }
+}
+
+impl Drop for RefreshGuard<'_> {
+    fn drop(&mut self) {
+        *self.flag.lock().unwrap() = false;
+    }
+}
+
 pub struct Weiyun {
     http: Client,
     http_no_redirect: Client,
@@ -240,19 +263,13 @@ impl Weiyun {
             Ok(v) => Ok(v),
             Err(e) if e.contains("HTTP 403") => {
                 // 单飞刷新后重试一次；微信登录先刷微信 token 再验证（对齐 Request() 403 分支）
-                let should_refresh = {
-                    let mut flag = self.refreshing.lock().unwrap();
-                    if *flag {
-                        false
-                    } else {
-                        *flag = true;
-                        true
-                    }
-                };
-                if !should_refresh {
+                //
+                // 用 guard 而不是手动置位/复位：刷新中途 panic 或提前 return 时，
+                // 布尔标志会永远停在 true，该账号此后永不刷新（只能重启进程）。
+                let Some(_guard) = RefreshGuard::acquire(&self.refreshing) else {
                     return Err(e);
-                }
-                let r = match self.refresh_ctoken().await {
+                };
+                match self.refresh_ctoken().await {
                     Err(e2)
                         if e2 == EXPIRED
                             && matches!(self.login_type(), "weixin" | "weixin_openid") =>
@@ -263,9 +280,7 @@ impl Weiyun {
                         }
                     }
                     other => other,
-                };
-                *self.refreshing.lock().unwrap() = false;
-                r?;
+                }?;
                 let resp = self.do_request(protocol, cmd_name, cmd, &body).await?;
                 resp
             }

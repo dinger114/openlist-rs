@@ -371,7 +371,8 @@ function onSettingsSaved() {
 }
 
 async function fetchAccountSecret(id) {
-  return api(`/api/accounts/${id}/secret`)
+  // POST：凭据明细不进浏览器缓存 / 反代日志（后端也带 Cache-Control: no-store）
+  return api(`/api/accounts/${id}/secret`, { method: 'POST' })
 }
 
 async function loadAccounts() {
