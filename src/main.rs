@@ -1,6 +1,7 @@
 mod api;
 mod assets;
 mod auth;
+mod backup;
 mod compat;
 mod config;
 mod drivers;
@@ -76,6 +77,12 @@ enum Cmd {
 async fn main() {
     let args = Args::parse();
 
+    // 结构化日志初始化：替代散落的 eprintln!，支持 RUST_LOG 环境变量过滤
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+
     // 账号管理子命令：操作数据库后直接退出，不启动服务
     if let Some(cmd) = args.cmd {
         run_command(cmd, &args.dir);
@@ -133,6 +140,9 @@ async fn main() {
         .route("/api/web/token/reset", post(auth::reset_api_token))
         // 直链签名盐：重置后所有已发出的 ?sign= 链接失效（与令牌解耦）
         .route("/api/web/sign-key/reset", post(auth::reset_sign_key))
+        // 配置备份与恢复（可选密码加密）
+        .route("/api/web/backup/create", post(backup::create_backup_handler))
+        .route("/api/web/backup/restore", post(backup::restore_backup_handler))
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
         .route("/api/me", get(compat::compat_me))

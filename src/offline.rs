@@ -271,7 +271,7 @@ pub(crate) fn spawn_poller(st: AppState) {
                 let driver = match st.get_driver(&acc).await {
                     Ok(d) => d,
                     Err(e) => {
-                        eprintln!("离线任务轮询：取驱动失败 {acc}: {e}");
+                        tracing::error!("离线任务轮询：取驱动失败 {acc}: {e}");
                         // 账号被删/崩溃时别每 3 秒重试一次，直接标失败
                         st.offline
                             .fail_account_tasks(&acc, "存储不可用，无法查询离线任务进度");
@@ -284,11 +284,11 @@ pub(crate) fn spawn_poller(st: AppState) {
                 {
                     Ok(Ok(l)) => l,
                     Ok(Err(e)) => {
-                        eprintln!("离线任务轮询：拉列表失败 {acc}: {e}");
+                        tracing::error!("离线任务轮询：拉列表失败 {acc}: {e}");
                         continue; // 单次失败不判死，下一轮再试
                     }
                     Err(_) => {
-                        eprintln!("离线任务轮询：拉列表超时 {acc}");
+                        tracing::error!("离线任务轮询：拉列表超时 {acc}");
                         continue;
                     }
                 };
@@ -298,7 +298,7 @@ pub(crate) fn spawn_poller(st: AppState) {
                         // 终态：目标目录缓存立刻失效，面板下次刷新就能看到新文件
                         st.list_cache.invalidate_key(&dst_cache_key(&done));
                         if done.state == TaskState::Failed {
-                            eprintln!("离线任务失败 {}: {}", done.url, done.error);
+                            tracing::error!("离线任务失败 {}: {}", done.url, done.error);
                         }
                     }
                 }

@@ -130,6 +130,9 @@ function clear() {
 function applyTheme(dark) {
   isDark.value = dark
   document.documentElement.classList.toggle('dark', dark)
+  // 同步 <meta name="color-scheme">，使浏览器原生 UI（滚动条、表单控件等）跟随主题
+  const meta = document.querySelector('meta[name="color-scheme"]')
+  if (meta) meta.content = dark ? 'dark' : 'light'
   try {
     localStorage.setItem('ol-theme', dark ? 'dark' : 'light')
   } catch (_) {}

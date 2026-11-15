@@ -914,13 +914,13 @@ impl Aes128 {
     fn encrypt_block(&self, state: &mut [u8; 16]) {
         let t = aes_tables();
         Self::add_round_key(state, &self.round_keys[0]);
-        for round in 1..10 {
+        for rk in &self.round_keys[1..10] {
             for b in state.iter_mut() {
                 *b = t.sbox[*b as usize];
             }
             Self::shift_rows(state);
             Self::mix_columns(state);
-            Self::add_round_key(state, &self.round_keys[round]);
+            Self::add_round_key(state, rk);
         }
         for b in state.iter_mut() {
             *b = t.sbox[*b as usize];
@@ -1235,8 +1235,8 @@ impl EcdhCipher {
         let r1: u8 = rng.random_range(0..=255);
         let r2: u8 = rng.random_range(0..=255);
         let mut tmp: Vec<u8> = Vec::with_capacity(74);
-        for i in 0..15 {
-            tmp.push(self.pub_key[i] ^ r1);
+        for &k in &self.pub_key[..15] {
+            tmp.push(k ^ r1);
         }
         tmp.push(r1);
         tmp.push(0x73 ^ r1);
@@ -1247,8 +1247,8 @@ impl EcdhCipher {
         for i in 0..4 {
             tmp.push(r1 ^ time[3 - i]);
         }
-        for i in 15..self.pub_key.len() {
-            tmp.push(self.pub_key[i] ^ r2);
+        for &k in &self.pub_key[15..] {
+            tmp.push(k ^ r2);
         }
         tmp.push(r2);
         tmp.push(0x01 ^ r2);

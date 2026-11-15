@@ -206,7 +206,7 @@ pub(crate) async fn login(
         header::HeaderValue::from_str(&format!(
             "olm_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800"
         ))
-        .unwrap(),
+        .expect("Cookie 头格式错误")
     );
     resp
 }

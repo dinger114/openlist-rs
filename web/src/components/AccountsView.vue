@@ -1317,7 +1317,7 @@ const DRIVER_COLORS = {
 const badgeName = (d) => props.driverLabels[d] || d
 const badgeStyle = (d) => {
   const c = DRIVER_COLORS[d] || '#86909c'
-  return { background: c + '1f', color: c }
+  return { background: c, color: '#fff', textShadow: '0 0 1px rgba(0,0,0,.35)' }
 }
 </script>
 
