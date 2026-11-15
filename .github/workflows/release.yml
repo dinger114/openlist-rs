@@ -102,6 +102,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # 改了 Cargo.toml 的版本号后，Cargo.lock 里 `openlist-rs` 那条记录的版本就对不上了，
+      # 下面 `cargo build --locked` 会直接报 "cannot update the lock file"。
+      # 只重锁本工作区包（`-p openlist-rs`），外部依赖版本一律不动 —— 这正是我们要的：
+      # 依赖保持仓库锁定值，只有自身版本号跟随发布 tag。
+      # 不能加 `--offline`：跑在 Cache cargo 之前，全新 runner 的 registry 还是空的。
+      - name: Refresh workspace version in Cargo.lock
+        shell: bash
+        run: |
+          cargo update -p openlist-rs
+          # 防御性校验：只应有 openlist-rs 的版本行变化（1 行增 1 行删）
+          git diff --numstat Cargo.lock
+
       # 3. 平台特定依赖
       - name: Install musl-tools (Linux musl)
         if: runner.os == 'Linux' && contains(matrix.target, 'musl')
