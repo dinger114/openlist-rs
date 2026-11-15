@@ -16,6 +16,9 @@ pub struct Smb {
     username: String,
     password: String,
     share_name: String,
+    /// 挂载子路径。当前 SMB 驱动尚未实现读写，此字段暂不参与任何逻辑，
+    /// 保留是为了后续接入纯 Rust SMB 客户端时直接使用（不打印到错误信息里）。
+    #[allow(dead_code)]
     root_path: String,
 }
 
@@ -63,10 +66,11 @@ impl Smb {
     }
 
     pub async fn list(&self, _parent_fid: &str) -> Result<Vec<Entry>, String> {
+        // 不回显 username / root_path：错误信息会进日志与 API 响应
         Err(format!(
-            "SMB 协议读写尚未启用（已保存 //{}/{} user={} root={:?}）。\
+            "SMB 协议读写尚未启用（已保存 //{}/{}）。\
 请在系统挂载 CIFS 后使用「本机存储」，或等待后续版本接入纯 Rust SMB 客户端。",
-            self.address, self.share_name, self.username, self.root_path
+            self.address, self.share_name
         ))
     }
 

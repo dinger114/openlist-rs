@@ -188,19 +188,8 @@ impl Dropbox {
     }
 
     fn resolve(&self, fid: &str) -> String {
-        let fid = fid.trim();
-        if fid.is_empty() || fid == "0" || fid == "/" {
-            return self.root_path.clone();
-        }
-        if fid.starts_with('/') {
-            if self.root_path.is_empty() {
-                fid.to_string()
-            } else {
-                format!("{}{}", self.root_path, fid)
-            }
-        } else {
-            format!("{}/{}", self.root_path, fid)
-        }
+        // 归一化到 root_path 之下（折叠 .. 与多余斜杠，禁止逃出挂载根）
+        super::normalize_fid(&self.root_path, fid)
     }
 
     pub async fn validate(&self) -> Result<(), String> {

@@ -569,8 +569,19 @@ fn parse_http_date_ms(s: &str) -> Option<i64> {
     let h = tp[0].parse::<i64>().ok()?;
     let mi = tp[1].parse::<i64>().ok()?;
     let sec = tp[2].parse::<i64>().ok()?;
+    // 年份限位：不限制的话 days_from_civil 的乘法会在 i64 上溢出（恶意服务器可控响应头）
+    if !(1000..=9999).contains(&year) {
+        return None;
+    }
     let days = days_from_civil(year, mon, day);
-    Some((days * 86_400 + h * 3600 + mi * 60 + sec) * 1000)
+    // 各字段也做范围校验，避免恶意值把乘法推爆
+    if !(0..=23).contains(&h) || !(0..=59).contains(&mi) || !(0..=60).contains(&sec) {
+        return None;
+    }
+    let secs = days
+        .checked_mul(86_400)?
+        .checked_add(h * 3600 + mi * 60 + sec)?;
+    secs.checked_mul(1000)
 }
 
 fn month_of(s: &str) -> Option<i64> {

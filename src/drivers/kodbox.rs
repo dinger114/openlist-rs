@@ -142,11 +142,19 @@ impl Kodbox {
 
     /// fid → KodBox path（根 = root_path）
     fn resolve(&self, fid: &str) -> String {
+        let root = format!("/{}", self.root_path.trim_matches('/'));
         let fid = fid.trim();
         if fid.is_empty() || fid == "0" || fid == "/" {
-            return format!("/{}", self.root_path.trim_matches('/'));
+            return root;
         }
-        fid.to_string()
+        // 本驱动的 fid 是服务端绝对路径（list 时由接口返回），不能像相对路径那样拼接
+        // root，只能校验包含关系：不在挂载根之下的一律回落到根，防越界读取。
+        let normalized = super::normalize_abs_path(fid);
+        if super::path_under_root(&root, &normalized) {
+            normalized
+        } else {
+            root
+        }
     }
 
     pub async fn list(&self, parent_fid: &str) -> Result<Vec<Entry>, String> {

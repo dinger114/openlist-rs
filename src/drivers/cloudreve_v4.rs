@@ -353,11 +353,29 @@ impl CloudreveV4 {
 
     /// fid → uri；根 "/" 映射为 "cloudreve://my{root_path}"
     fn resolve(&self, fid: &str) -> String {
+        let root_rel = format!("/{}", self.root_path.trim_matches('/'));
+        let root_uri = format!("cloudreve://my{root_rel}");
         let fid = fid.trim();
         if fid.is_empty() || fid == "0" || fid == "/" {
-            return format!("cloudreve://my{}", self.root_path);
+            return root_uri;
         }
-        fid.to_string()
+        // 已带 scheme 的完整 uri：校验落在挂载根之下，否则回落到根
+        if fid.starts_with("cloudreve://") {
+            let rel = super::normalize_abs_path(fid.trim_start_matches("cloudreve://my"));
+            return if super::path_under_root(&root_rel, &rel) {
+                format!("cloudreve://my{rel}")
+            } else {
+                root_uri
+            };
+        }
+        // 相对路径 fid：拼到挂载根之下（折叠 ..，禁止逃逸）
+        let rel = super::normalize_abs_path(fid);
+        let joined = super::normalize_abs_path(&format!("{root_rel}/{rel}"));
+        if super::path_under_root(&root_rel, &joined) {
+            format!("cloudreve://my{joined}")
+        } else {
+            root_uri
+        }
     }
 
     pub async fn list(&self, parent_fid: &str) -> Result<Vec<Entry>, String> {

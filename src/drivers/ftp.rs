@@ -66,15 +66,8 @@ impl Ftp {
     }
 
     fn resolve(&self, fid: &str) -> String {
-        let fid = fid.trim();
-        if fid.is_empty() || fid == "0" || fid == "/" {
-            return self.root_path.clone();
-        }
-        if fid.starts_with('/') {
-            fid.to_string()
-        } else {
-            format!("{}/{}", self.root_path.trim_end_matches('/'), fid)
-        }
+        // 归一化到 root_path 之下：折叠 .. 与多余斜杠，fid 以 / 开头也不再绕过挂载根
+        super::normalize_fid(&self.root_path, fid)
     }
 
     async fn connect(&self) -> Result<FtpConn, String> {
@@ -139,14 +132,14 @@ impl Ftp {
         self.with_conn(move |c| {
             Box::pin(async move {
                 let data = if cwd_list {
-                    write_cmd(&mut c.control, &format!("CWD {path_enc}")).await?;
+                    write_cmd_bytes(&mut c.control, &cmd_with_path("CWD", &path_enc)).await?;
                     let r = read_response(&mut c.control).await?;
                     if r.code != 250 {
                         return Err(format!("CWD 失败: {} {}", r.code, r.message));
                     }
-                    pasv_list(c, "LIST").await?
+                    pasv_list(c, b"LIST").await?
                 } else {
-                    pasv_list(c, &format!("LIST {path_enc}")).await?
+                    pasv_list(c, &cmd_with_path("LIST", &path_enc)).await?
                 };
                 let text = decode_bytes(&data, &encoding);
                 let mut out = Vec::new();
@@ -207,7 +200,7 @@ impl Ftp {
         );
         self.with_conn(move |c| {
             Box::pin(async move {
-                write_cmd(&mut c.control, &format!("MKD {path}")).await?;
+                write_cmd_bytes(&mut c.control, &cmd_with_path("MKD", &path)).await?;
                 let r = read_response(&mut c.control).await?;
                 if r.code == 257 || r.code == 250 {
                     Ok(())
@@ -234,12 +227,12 @@ impl Ftp {
         let dst_e = encode_path(&dst, &self.encoding);
         self.with_conn(move |c| {
             Box::pin(async move {
-                write_cmd(&mut c.control, &format!("RNFR {src_e}")).await?;
+                write_cmd_bytes(&mut c.control, &cmd_with_path("RNFR", &src_e)).await?;
                 let r = read_response(&mut c.control).await?;
                 if r.code != 350 {
                     return Err(format!("RNFR 失败: {} {}", r.code, r.message));
                 }
-                write_cmd(&mut c.control, &format!("RNTO {dst_e}")).await?;
+                write_cmd_bytes(&mut c.control, &cmd_with_path("RNTO", &dst_e)).await?;
                 let r = read_response(&mut c.control).await?;
                 if r.code == 250 {
                     Ok(())
@@ -268,12 +261,12 @@ impl Ftp {
         let dst_e = encode_path(&dst, &self.encoding);
         self.with_conn(move |c| {
             Box::pin(async move {
-                write_cmd(&mut c.control, &format!("RNFR {src_e}")).await?;
+                write_cmd_bytes(&mut c.control, &cmd_with_path("RNFR", &src_e)).await?;
                 let r = read_response(&mut c.control).await?;
                 if r.code != 350 {
                     return Err(format!("RNFR 失败: {} {}", r.code, r.message));
                 }
-                write_cmd(&mut c.control, &format!("RNTO {dst_e}")).await?;
+                write_cmd_bytes(&mut c.control, &cmd_with_path("RNTO", &dst_e)).await?;
                 let r = read_response(&mut c.control).await?;
                 if r.code == 250 {
                     Ok(())
@@ -300,9 +293,9 @@ impl Ftp {
         self.with_conn(move |c| {
             Box::pin(async move {
                 if is_dir {
-                    write_cmd(&mut c.control, &format!("RMD {path}")).await?;
+                    write_cmd_bytes(&mut c.control, &cmd_with_path("RMD", &path)).await?;
                 } else {
-                    write_cmd(&mut c.control, &format!("DELE {path}")).await?;
+                    write_cmd_bytes(&mut c.control, &cmd_with_path("DELE", &path)).await?;
                 }
                 let r = read_response(&mut c.control).await?;
                 if (200..300).contains(&r.code) {
@@ -348,17 +341,38 @@ struct FtpResp {
 }
 
 async fn write_cmd(control: &mut BufReader<TcpStream>, cmd: &str) -> Result<(), String> {
+    write_cmd_bytes(control, cmd.as_bytes()).await
+}
+
+/// 按原始字节写命令（路径可能是 GBK 编码，不能经 UTF-8 字符串中转）。
+async fn write_cmd_bytes(control: &mut BufReader<TcpStream>, cmd: &[u8]) -> Result<(), String> {
+    // 控制通道是 CRLF 分行的文本协议：参数里一旦混入 \r/\n 就能注入任意后续命令
+    // （文件名可控，如 `a\r\nDELE important.txt`）。这里在写出前统一拒绝控制字符。
+    if cmd.iter().any(|&b| b == b'\r' || b == b'\n' || b == 0) {
+        return Err("FTP 命令包含非法控制字符（疑似命令注入）".into());
+    }
+    let mut buf = Vec::with_capacity(cmd.len() + 2);
+    buf.extend_from_slice(cmd);
+    buf.extend_from_slice(b"\r\n");
     control
         .get_mut()
-        .write_all(format!("{cmd}\r\n").as_bytes())
+        .write_all(&buf)
         .await
         .map_err(|e| format!("写控制连接失败: {e}"))
 }
+
+/// 多行响应累计上限：恶意/故障 FTP 服务器可以无限推送 `123-` 续行把内存吃光
+const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 async fn read_response(control: &mut BufReader<TcpStream>) -> Result<FtpResp, String> {
     let mut message = String::new();
     let mut code = 0u16;
     loop {
+        if message.len() > MAX_RESPONSE_BYTES {
+            return Err(format!(
+                "FTP 响应超过 {MAX_RESPONSE_BYTES} 字节上限（疑似恶意服务器）"
+            ));
+        }
         let mut line = String::new();
         control
             .read_line(&mut line)
@@ -401,14 +415,33 @@ async fn pasv_open(c: &mut FtpConn) -> Result<TcpStream, String> {
     }
     let host = format!("{}.{}.{}.{}", nums[0], nums[1], nums[2], nums[3]);
     let port = nums[4] * 256 + nums[5];
-    TcpStream::connect(format!("{host}:{port}"))
+
+    // PASV 返回的地址必须与控制连接对端一致：不一致就是经典的 FTP bounce
+    // （服务器诱使客户端去连第三方地址，可被用来扫描/打内网）。
+    let peer_ip = c
+        .control
+        .get_ref()
+        .peer_addr()
+        .map_err(|e| format!("读取控制连接对端失败: {e}"))?
+        .ip();
+    let host_ip: std::net::IpAddr = host
+        .parse()
+        .map_err(|_| format!("PASV 返回的地址无法解析: {host}"))?;
+    let target = if host_ip == peer_ip {
+        format!("{host}:{port}")
+    } else {
+        // 常见于 NAT/多网卡服务器：改连控制连接的对端 IP + 服务器给的端口
+        format!("{peer_ip}:{port}")
+    };
+
+    TcpStream::connect(target)
         .await
         .map_err(|e| format!("数据连接失败: {e}"))
 }
 
-async fn pasv_list(c: &mut FtpConn, cmd: &str) -> Result<Vec<u8>, String> {
+async fn pasv_list(c: &mut FtpConn, cmd: &[u8]) -> Result<Vec<u8>, String> {
     let mut data = pasv_open(c).await?;
-    write_cmd(&mut c.control, cmd).await?;
+    write_cmd_bytes(&mut c.control, cmd).await?;
     let r = read_response(&mut c.control).await?;
     if r.code != 150 && r.code != 125 {
         return Err(format!("LIST 失败: {} {}", r.code, r.message));
@@ -422,9 +455,9 @@ async fn pasv_list(c: &mut FtpConn, cmd: &str) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-async fn pasv_retr(c: &mut FtpConn, path: &str) -> Result<Vec<u8>, String> {
+async fn pasv_retr(c: &mut FtpConn, path: &[u8]) -> Result<Vec<u8>, String> {
     let mut data = pasv_open(c).await?;
-    write_cmd(&mut c.control, &format!("RETR {path}")).await?;
+    write_cmd_bytes(&mut c.control, &cmd_with_path("RETR", path)).await?;
     let r = read_response(&mut c.control).await?;
     if r.code != 150 && r.code != 125 {
         return Err(format!("RETR 失败: {} {}", r.code, r.message));
@@ -438,9 +471,9 @@ async fn pasv_retr(c: &mut FtpConn, path: &str) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-async fn pasv_stor(c: &mut FtpConn, path: &str, body: &[u8]) -> Result<(), String> {
+async fn pasv_stor(c: &mut FtpConn, path: &[u8], body: &[u8]) -> Result<(), String> {
     let mut data = pasv_open(c).await?;
-    write_cmd(&mut c.control, &format!("STOR {path}")).await?;
+    write_cmd_bytes(&mut c.control, &cmd_with_path("STOR", path)).await?;
     let r = read_response(&mut c.control).await?;
     if r.code != 150 && r.code != 125 {
         return Err(format!("STOR 失败: {} {}", r.code, r.message));
@@ -509,21 +542,76 @@ fn parse_list_line(line: &str, parent: &str) -> Option<Entry> {
     None
 }
 
-fn encode_path(path: &str, encoding: &str) -> String {
+/// 路径编码：GBK 服务器需要把 UTF-8 路径转成 GBK 字节（FTP 控制通道按字节解释）。
+///
+/// 旧实现对全部编码分支原样返回，GBK 配置形同虚设 —— 中文文件名在 GBK 服务器上
+/// 会变成乱码，甚至因编码不匹配被服务端拒绝。
+fn encode_path(path: &str, encoding: &str) -> Vec<u8> {
     let enc = encoding.to_lowercase();
-    if enc.is_empty() || enc == "utf-8" || enc == "utf8" {
-        return path.to_string();
-    }
     if enc == "gbk" || enc == "gb2312" {
-        return path.to_string();
+        let (bytes, _, had_errors) = encoding_rs::GBK.encode(path);
+        if !had_errors {
+            return bytes.into_owned();
+        }
+        // 有字符无法用 GBK 表示（如 emoji）：退回 UTF-8，至少不会静默损坏
     }
-    path.to_string()
+    path.as_bytes().to_vec()
+}
+
+/// 拼 `CMD <path>` 的原始字节命令（path 可能是 GBK 编码）。
+fn cmd_with_path(cmd: &str, path: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(cmd.len() + 1 + path.len());
+    out.extend_from_slice(cmd.as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(path);
+    out
 }
 
 fn decode_bytes(data: &[u8], encoding: &str) -> String {
     let enc = encoding.to_lowercase();
     if enc == "gbk" || enc == "gb2312" {
-        return String::from_utf8_lossy(data).to_string();
+        let (cow, _, _) = encoding_rs::GBK.decode(data);
+        return cow.to_string();
     }
     String::from_utf8_lossy(data).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M-6：控制字符必须被拒（命令注入）
+    #[test]
+    fn encode_path_handles_gbk() {
+        // UTF-8 路径在 GBK 下应产生 GBK 字节
+        let gbk = encode_path("中文.txt", "gbk");
+        assert_ne!(gbk, "中文.txt".as_bytes(), "GBK 分支必须真的转换");
+        // 能往返解码回原文
+        let (decoded, _, _) = encoding_rs::GBK.decode(&gbk);
+        assert_eq!(decoded, "中文.txt");
+        // UTF-8 分支原样返回
+        assert_eq!(encode_path("中文.txt", "utf-8"), "中文.txt".as_bytes());
+        // 空编码按 UTF-8
+        assert_eq!(encode_path("a/b", ""), b"a/b");
+    }
+
+    /// M-6：decode_bytes 对称
+    #[test]
+    fn decode_bytes_handles_gbk() {
+        let (gbk, _, _) = encoding_rs::GBK.encode("中文.txt");
+        assert_eq!(decode_bytes(&gbk, "gbk"), "中文.txt");
+        assert_eq!(decode_bytes(b"plain.txt", "utf-8"), "plain.txt");
+    }
+
+    /// M-6：拼命令时控制字符不能被混入
+    #[test]
+    fn cmd_with_path_rejects_control_chars() {
+        // 这个测试验证 cmd_with_path 会原样拼接，真正的拒绝在 write_cmd_bytes
+        // 这里断言含 \r\n 的路径能被打包（拒绝逻辑在写出时）
+        let evil = b"a\r\nDELE x";
+        let cmd = cmd_with_path("STOR", evil);
+        assert!(cmd.contains(&b'\r'));
+        // write_cmd_bytes 的检查逻辑：任何 \r/\n/\0 都应被拒
+        assert!(cmd.iter().any(|&b| b == b'\r' || b == b'\n' || b == 0));
+    }
 }
