@@ -44,6 +44,9 @@ aes = "0.9"
 # 面板密码哈希：argon2id（PHC 串落库）。已在依赖树里（russh → ssh-key 带进来），
 # 提成直接依赖不引入新下载；参数与并发约束见 src/password.rs
 argon2 = "0.6"
+# 结构化日志：替代 eprintln!，输出带时间戳/级别/文件行号的结构化日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 [profile.release]
 strip = "symbols"

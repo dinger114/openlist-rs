@@ -297,6 +297,9 @@ const preview = ref(null)
 const isDark = ref(false)
 function applyTheme() {
   document.documentElement.classList.toggle('dark', isDark.value)
+  // 同步 <meta name="color-scheme">，使浏览器原生 UI（滚动条、表单控件等）跟随主题
+  const meta = document.querySelector('meta[name="color-scheme"]')
+  if (meta) meta.content = isDark.value ? 'dark' : 'light'
 }
 function toggleTheme() {
   isDark.value = !isDark.value

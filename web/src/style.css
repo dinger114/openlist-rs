@@ -22,6 +22,18 @@
   --ol-shadow: 0 2px 8px rgba(30, 40, 80, 0.06);
   --ol-shadow-lg: 0 12px 40px rgba(30, 40, 80, 0.16);
   --ol-header-h: 60px;
+
+  /* 暗色模式：跟随系统偏好，JS 切换时通过 <meta name="color-scheme"> 联动 */
+  color-scheme: light dark;
+}
+
+/* 将 <meta name="color-scheme"> 的内容映射到 CSS color-scheme，
+   使 JS 切换主题后浏览器原生 UI（滚动条、表单控件等）同步响应 */
+:root:has(> head > meta[name="color-scheme"][content="dark"]) {
+  color-scheme: dark;
+}
+:root:has(> head > meta[name="color-scheme"][content="light"]) {
+  color-scheme: light;
 }
 
 html.dark {
@@ -78,16 +90,24 @@ button {
   font-family: inherit;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* 滚动条：标准属性优先，WebKit 回退仅在不支持 scrollbar-color 时生效 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ol-border-strong) transparent;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--ol-border-strong);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+
+@supports not (scrollbar-color: auto) {
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--ol-border-strong);
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 /* ---------- generic buttons ---------- */
