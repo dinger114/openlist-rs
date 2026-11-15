@@ -11,7 +11,6 @@ use crate::config::Config;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::RngExt;
-use serde_json;
 use std::io;
 
 const MAGIC: &[u8; 4] = b"OLBK";
@@ -93,10 +92,12 @@ pub fn parse_backup(blob: &[u8], password: Option<&str>) -> Result<Config, Strin
 
 // ---------- 内部：加密 / 解密 ----------
 
+type EncryptedParts = (Vec<u8>, Vec<u8>, Vec<u8>);
+
 fn encrypt_with_password(
     password: &str,
     plain: &[u8],
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+) -> Result<EncryptedParts, String> {
     let mut salt = [0u8; SALT_LEN];
     let mut nonce = [0u8; NONCE_LEN];
     rand::rng().fill(&mut salt);
@@ -140,7 +141,7 @@ fn derive_key(password: &str, salt: &[u8]) -> [u8; KEY_LEN] {
 
     for _ in 0..KDF_ITERATIONS {
         let mut hasher = Sha256::new();
-        hasher.update(&result);
+        hasher.update(result);
         hasher.update(password.as_bytes());
         hasher.update(salt);
         result = hasher.finalize();
