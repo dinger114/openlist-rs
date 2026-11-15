@@ -666,7 +666,7 @@ impl CloudreveV4 {
             input.size as i64
         };
         // 3. 缓冲后分片上传
-        let mut buf = Vec::with_capacity(input.size as usize);
+        let mut buf = Vec::with_capacity(super::prealloc_cap(input.size));
         let mut tmp = vec![0u8; 64 * 1024];
         loop {
             let n = input

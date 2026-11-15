@@ -142,7 +142,14 @@ async fn main() {
         .route("/api/web/sign-key/reset", post(auth::reset_sign_key))
         // 配置备份与恢复（可选密码加密）
         .route("/api/web/backup/create", post(backup::create_backup_handler))
-        .route("/api/web/backup/restore", post(backup::restore_backup_handler))
+        // 恢复会把整个备份文件读进内存，单独限 64MB。备份内容是 JSON 配置（账号凭据 +
+        // 面板设置），即便上千个账号也只有几 MB，64MB 足够宽松且能挡住内存耗尽。
+        .route(
+            "/api/web/backup/restore",
+            post(backup::restore_backup_handler).layer(
+                axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024),
+            ),
+        )
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
         .route("/api/auth/login", post(compat::compat_login))
         .route("/api/me", get(compat::compat_me))
@@ -178,10 +185,12 @@ async fn main() {
         .route("/dav", axum::routing::any(webdav::handle_root))
         .route("/dav/", axum::routing::any(webdav::handle_root))
         .route("/dav/{*path}", axum::routing::any(webdav::handle_path))
-        // 上传没有体量上限：/api/fs/form 是 multipart 提取器，axum 默认 2MB 上限会让稍大的
-        // 文件直接 400（"Error parsing multipart/form-data request"）；内容由 handler 边收边落盘，
-        // /api/fs/put 本来就是流式，不受上限保护也无需它
-        .layer(axum::extract::DefaultBodyLimit::disable())
+        // 上传需要大请求体（axum 默认 2MB 会让稍大的文件直接 400），但绝不等于无上限：
+        // 全局给 8GB 兜底，备份恢复单独限 512MB（见下面的路由级 layer）。
+        // /api/fs/put 是流式转发不受此限影响；/api/fs/form 走 multipart 提取器，受此保护。
+        .layer(axum::extract::DefaultBodyLimit::max(
+            8 * 1024 * 1024 * 1024,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_guard,

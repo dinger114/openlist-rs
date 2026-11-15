@@ -112,7 +112,9 @@ const emit = defineEmits(['login', 'update:form'])
 const isDark = ref(false)
 const remember = ref(localStorage.getItem('ol-remember') === 'true')
 
-// 勾选记住账号：与官方一致，把用户名/密码存 localStorage，下次自动填充
+// 勾选记住账号：只记住用户名。口令**绝不**落 localStorage ——
+// 任何 XSS、恶意扩展或本机低权限进程读同域数据都能拿到管理员口令，
+// 而会话 Cookie 至少还有 HttpOnly 保护。
 watch(remember, (v) => {
   localStorage.setItem('ol-remember', String(v))
   if (!v) {
@@ -143,11 +145,11 @@ function toggleTheme() {
 }
 
 onMounted(() => {
-  // 回填记住的账号
+  // 回填记住的用户名（口令从不回填 —— 老版本可能残留 ol-pwd，这里顺手清掉）
+  localStorage.removeItem('ol-pwd')
   if (remember.value) {
     const u = localStorage.getItem('ol-user')
-    const p = localStorage.getItem('ol-pwd')
-    if (u || p) emit('update:form', { username: u || '', password: p || '' })
+    if (u) emit('update:form', { username: u, password: '' })
   }
   try {
     const saved = localStorage.getItem('ol-theme')
@@ -159,14 +161,14 @@ onMounted(() => {
   }
 })
 
-// 登录成功后由 App 清空；这里负责在输入时同步保存（勾选状态下）
+// 登录成功后由 App 清空；这里只保存用户名（口令不落盘，见上面 watch 注释）
 defineExpose({
-  saveRemember(username, password) {
+  saveRemember(username) {
     if (!remember.value) return
     if (username) localStorage.setItem('ol-user', username)
     else localStorage.removeItem('ol-user')
-    if (password) localStorage.setItem('ol-pwd', password)
-    else localStorage.removeItem('ol-pwd')
+    // 清掉任何历史遗留的明文口令
+    localStorage.removeItem('ol-pwd')
   }
 })
 </script>

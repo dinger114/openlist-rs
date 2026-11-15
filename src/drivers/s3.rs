@@ -384,7 +384,7 @@ impl S3 {
         };
         // 将流读入内存（对齐简化实现；大文件可后续改 multipart）
         let mut reader = input.reader;
-        let mut buf = Vec::with_capacity(input.size.min(64 * 1024 * 1024) as usize);
+        let mut buf = Vec::with_capacity(super::prealloc_cap(input.size));
         let mut tmp = [0u8; 64 * 1024];
         loop {
             use tokio::io::AsyncReadExt;

@@ -183,6 +183,7 @@ pub(crate) struct LoginReq {
 pub(crate) async fn login(
     State(st): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LoginReq>,
 ) -> Response {
     let ip = peer.ip();
@@ -200,15 +201,33 @@ pub(crate) async fn login(
     }
     st.login_limiter.lock().unwrap().record_success(ip);
     let token = issue_session(&st);
+    // 反代 HTTPS 场景（X-Forwarded-Proto: https）必须给会话 Cookie 加 Secure，
+    // 否则浏览器可能经 http:// 同域明文回传 Cookie 被截获。项目本身只提供明文
+    // HTTP（README 建议反代 HTTPS），所以这里按请求头动态判断而不是无条件加。
+    let secure = request_is_https(&headers);
     let mut resp = Json(json!({ "ok": true })).into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
         header::HeaderValue::from_str(&format!(
-            "olm_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800"
+            "olm_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800{}",
+            if secure { "; Secure" } else { "" }
         ))
         .expect("Cookie 头格式错误")
     );
     resp
+}
+
+/// 请求是否经 HTTPS 反代而来。
+///
+/// 只看 `X-Forwarded-Proto`（不信任 `Forwarded` 的复杂语法）：该头可被客户端伪造，
+/// 但伪造它的后果只是「自己的 Cookie 多一个 Secure」——不影响他人，也不构成提权。
+/// 反向漏判（HTTPS 下没加 Secure）才是真正的风险，所以这里偏保守。
+fn request_is_https(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(',').next().unwrap_or("").trim().eq_ignore_ascii_case("https"))
+        .unwrap_or(false)
 }
 
 /// POST /api/logout —— 面板登出
@@ -242,6 +261,13 @@ pub(crate) async fn get_web_user(State(st): State<AppState>) -> Json<serde_json:
 pub(crate) struct WebSettingsReq {
     username: Option<String>,
     password: Option<String>,
+    /// 当前口令（改密时的第二道确认）。
+    ///
+    /// 会话被劫持（localStorage 口令泄漏、共享浏览器残留会话）时，仅凭有效 Cookie
+    /// 就能永久接管管理员账号 —— 要求旧口令可以把「拿到会话」与「拿到口令」分开。
+    /// 与上游 AList 的改密流程一致。
+    #[serde(default)]
+    old_password: Option<String>,
 }
 
 /// POST /api/web/settings —— 修改面板用户名/密码（None = 保持不变）。
@@ -255,13 +281,24 @@ pub(crate) async fn update_web_settings(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let pass_ref = req
-        .password
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    // 口令不做 trim：含首尾空格的口令是合法的，静默改写会与 CLI 设置的口令产生差异
+    let pass_ref = req.password.as_deref().filter(|s| !s.is_empty());
     if user_ref.is_none() && pass_ref.is_none() {
         return Err((StatusCode::BAD_REQUEST, "用户名和密码均未填写".to_string()));
+    }
+    // 改密必须先验旧口令（第二道确认，见 WebSettingsReq::old_password 注释）
+    if pass_ref.is_some() {
+        let old = req.old_password.as_deref().unwrap_or("");
+        if old.is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "修改密码需要提供当前密码".to_string(),
+            ));
+        }
+        let current_user = st.auth.read().unwrap().user.clone();
+        if !verify_credentials(&st, &current_user, old).await {
+            return Err((StatusCode::FORBIDDEN, "当前密码不正确".to_string()));
+        }
     }
     // 密码先算好哈希（同步 argon2 走阻塞池 + 并发闸门），库与内存都只存哈希
     let new_pass = match pass_ref {

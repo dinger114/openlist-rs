@@ -88,6 +88,18 @@ pub struct PutInput {
     pub reader: Pin<Box<dyn AsyncRead + Send>>,
 }
 
+/// 上传缓冲预分配的封顶值。
+///
+/// 驱动里常见 `Vec::with_capacity(input.size as usize)`：`size` 来自客户端声明，
+/// 可以是 `u64::MAX` —— 32 位平台会截断，64 位平台直接尝试分配天文数字内存导致
+/// 进程 abort。预分配只是性能优化，封顶不影响正确性（后续 extend 会按需增长）。
+pub(crate) const UPLOAD_PREALLOC_CAP: u64 = 64 * 1024 * 1024;
+
+/// 按客户端声明的大小算一个安全的预分配容量（封顶 UPLOAD_PREALLOC_CAP）。
+pub(crate) fn prealloc_cap(declared: u64) -> usize {
+    declared.min(UPLOAD_PREALLOC_CAP) as usize
+}
+
 /// 包装 reader，把已读字节数累加到 progress（上传进度上报）
 pub struct ProgressReader<R> {
     inner: R,
@@ -1299,6 +1311,20 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M-5：预分配必须封顶 —— 客户端声明 u64::MAX 时不能直接尝试分配
+    #[test]
+    fn prealloc_cap_is_bounded() {
+        assert_eq!(prealloc_cap(u64::MAX), UPLOAD_PREALLOC_CAP as usize);
+        assert_eq!(prealloc_cap(1024), 1024);
+        assert_eq!(prealloc_cap(0), 0);
+        assert_eq!(prealloc_cap(UPLOAD_PREALLOC_CAP), UPLOAD_PREALLOC_CAP as usize);
+        // 超过封顶一律压到封顶
+        assert_eq!(
+            prealloc_cap(UPLOAD_PREALLOC_CAP + 1),
+            UPLOAD_PREALLOC_CAP as usize
+        );
+    }
 
     /// 回归：ProgressReader 曾经把内层 Pending 当成 EOF —— tokio::fs::File 首次 poll 必 Pending
     /// （读操作交给阻塞池），于是面板上传 /api/fs/form 永远读到 0 字节、交空分块清单。

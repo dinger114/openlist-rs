@@ -514,7 +514,7 @@ impl Terabox {
             input.name.trim_matches('/')
         );
         // 缓冲全部内容（分片需要按块读 + md5 校验）
-        let mut buf = Vec::with_capacity(input.size as usize);
+        let mut buf = Vec::with_capacity(super::prealloc_cap(input.size));
         let mut tmp = vec![0u8; 256 * 1024];
         loop {
             let n = input
