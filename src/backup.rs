@@ -263,7 +263,7 @@ pub(crate) async fn restore_backup_handler(
     // 恢复会整份替换面板口令，必须比改密更严格地再确认一次
     let reauth = crate::auth::ReauthReq { old_password };
     if let Err(resp) = crate::auth::confirm_password(&st, peer.ip(), &reauth).await {
-        return resp;
+        return *resp;
     }
 
     let pwd = password.as_deref().map(str::trim).filter(|p| !p.is_empty());

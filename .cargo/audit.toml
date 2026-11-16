@@ -1,0 +1,15 @@
+# cargo-audit 配置。CI 的 audit job 用 `cargo audit --deny warnings` 跑。
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071「Marvin Attack」：PKCS#1 v1.5 **解密**的时序侧信道，
+    # 攻击者据响应耗时逐步恢复私钥。本仓库不具备该攻击面：
+    #   * 直接用 rsa 的两处（pan189 上传参数、网易云 weapi）都只做
+    #     `RsaPublicKey::from_public_key_pem` + `.encrypt(.., Pkcs1v15Encrypt, ..)`，
+    #     即拿对方公钥加密，没有私钥、也没有任何解密调用；
+    #   * 另一路 rsa 来自 russh → ssh-key，用于 SSH 公钥验签与本地私钥解码
+    #     （PKCS#8，不是 PKCS#1 v1.5 解密），同样不经过该 code path。
+    # 上游目前只发布了 0.10.0-rc（同样在告警范围内），没有已修补的稳定版本可升。
+    # 待 rsa 0.10 正式版发布后应移除本条并升级依赖。
+    "RUSTSEC-2023-0071",
+]
