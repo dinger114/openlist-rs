@@ -178,7 +178,7 @@ fn derive_key_legacy(password: &str, salt: &[u8]) -> [u8; KEY_LEN] {
 
 use axum::{
     body::Bytes,
-    extract::{Multipart, State},
+    extract::{ConnectInfo, Multipart, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -195,7 +195,7 @@ pub(crate) async fn create_backup_handler(
     State(st): State<AppState>,
     Json(req): Json<BackupCreateReq>,
 ) -> Response {
-    let data = st.store.data.lock().unwrap();
+    let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
     let config = data.clone();
     drop(data);
 
@@ -225,10 +225,12 @@ pub(crate) async fn create_backup_handler(
 /// 解析验证后原子替换配置，清空全部会话。
 pub(crate) async fn restore_backup_handler(
     State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     mut multipart: Multipart,
 ) -> Response {
     let mut file_bytes: Option<Bytes> = None;
     let mut password: Option<String> = None;
+    let mut old_password: Option<String> = None;
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("");
@@ -238,6 +240,10 @@ pub(crate) async fn restore_backup_handler(
             }
             "password" => {
                 password = field.text().await.ok();
+            }
+            // 面板口令确认（与备份自身的加密口令是两回事）
+            "old_password" => {
+                old_password = field.text().await.ok();
             }
             _ => {}
         }
@@ -254,38 +260,46 @@ pub(crate) async fn restore_backup_handler(
         }
     };
 
+    // 恢复会整份替换面板口令，必须比改密更严格地再确认一次
+    let reauth = crate::auth::ReauthReq { old_password };
+    if let Err(resp) = crate::auth::confirm_password(&st, peer.ip(), &reauth).await {
+        return resp;
+    }
+
     let pwd = password.as_deref().map(str::trim).filter(|p| !p.is_empty());
-    match parse_backup(&blob, pwd) {
-        Ok(config) => {
-            let account_count = config.accounts.len();
-            // 先验证再写入：save 失败不修改原配置
-            let save_result = {
-                let mut data = st.store.data.lock().unwrap();
-                *data = config;
-                st.store.save(&data)
-            };
-            match save_result {
-                Ok(()) => {
-                    // 配置已变更：重建内存鉴权态（含明文口令→argon2id 的哈希收口），
-                    // 再清空全部会话。不刷新内存的话服务会继续按旧凭据放行。
-                    st.reload_auth();
-                    st.clear_sessions();
-                    (
-                        StatusCode::OK,
-                        Json(json!({ "ok": true, "accounts": account_count })),
-                    )
-                        .into_response()
-                }
-                Err(e) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("保存失败: {e}") })),
-                )
-                    .into_response(),
-            }
+    let config = match parse_backup(&blob, pwd) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": e })),
+            )
+                .into_response()
+        }
+    };
+
+    let account_count = config.accounts.len();
+    // 先落盘再改内存：save 失败时内存/磁盘/鉴权态都保持原样
+    let store = st.store.clone();
+    let snapshot = config.clone();
+    let saved: std::io::Result<()> = tokio::task::spawn_blocking(move || store.save(&snapshot))
+        .await
+        .unwrap_or_else(|e| Err(std::io::Error::other(e.to_string())));
+    match saved {
+        Ok(()) => {
+            *st.store.data.lock().unwrap_or_else(|e| e.into_inner()) = config;
+            // 配置已变更：重建内存鉴权态（含明文口令→argon2id 的哈希收口），再清空全部会话
+            st.reload_auth();
+            st.clear_sessions();
+            (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "accounts": account_count })),
+            )
+                .into_response()
         }
         Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("保存失败: {e}") })),
         )
             .into_response(),
     }

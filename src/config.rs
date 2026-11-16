@@ -533,6 +533,36 @@ fn default_alipan_type() -> String {
     "default".to_string()
 }
 
+/// 编辑账号时的凭据合并：`new` 里缺失或为空的字段沿用 `old`。
+///
+/// 面板提交的是整份凭据，而驱动会在 `validate()` 里回写 access_token、
+/// host_key_fingerprint 等自管字段；直接整体替换会把这些刚写入的值抹掉
+/// （SFTP 主机密钥钉扎尤其致命，见 AUDIT.md P1-3）。驱动类型变更时不合并。
+pub fn merge_credential(old: &Credential, new: Credential) -> Credential {
+    let (Ok(old_v), Ok(mut new_v)) = (
+        serde_json::to_value(old),
+        serde_json::to_value(&new),
+    ) else {
+        return new;
+    };
+    if old_v.get("driver") != new_v.get("driver") {
+        return new;
+    }
+    if let (Some(old_obj), Some(new_obj)) = (old_v.as_object(), new_v.as_object_mut()) {
+        for (k, v) in old_obj {
+            let empty = match new_obj.get(k) {
+                None | Some(serde_json::Value::Null) => true,
+                Some(serde_json::Value::String(s)) => s.is_empty(),
+                _ => false,
+            };
+            if empty {
+                new_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::from_value(new_v).unwrap_or(new)
+}
+
 fn default_platform() -> String {
     "web".to_string()
 }
@@ -697,6 +727,8 @@ const TAG_LEN: usize = 16;
 pub struct Store {
     db: Database,
     key: [u8; KEY_LEN],
+    /// 数据目录：首启凭据落盘用（非终端环境不打印明文）
+    dir: PathBuf,
     pub data: Mutex<Config>,
     /// 派生的直链签名密钥缓存（由存储密钥 + `Config::sign_nonce` 派生）。
     /// 单独一把锁：`sign_secret()` 在下载校验的热路径上，不能去抢 `data` 的锁 ——
@@ -742,8 +774,35 @@ impl Store {
         Store {
             db,
             key,
+            dir,
             data: Mutex::new(data),
             sign_key: std::sync::RwLock::new(sign_key),
+        }
+    }
+
+    /// 首启生成的明文凭据写一份到数据目录（0600）。
+    /// 非终端环境（systemd / docker logs）不宜把口令打到 stdout，但用户又要拿到它。
+    pub fn save_initial_credentials(&self, user: &str, pass: Option<&str>, token: Option<&str>) {
+        let path = self.dir.join("initial-credentials.txt");
+        let mut body = String::new();
+        body.push_str("# openlist-rs 首次启动生成的凭据，登录并改密后可删除本文件\n");
+        body.push_str(&format!("username: {user}\n"));
+        if let Some(p) = pass {
+            body.push_str(&format!("password: {p}\n"));
+        }
+        if let Some(t) = token {
+            body.push_str(&format!("api_token: {t}\n"));
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        match opts.open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, body.as_bytes())) {
+            Ok(()) => println!("首启凭据已写入 {}（登录后请删除）", path.display()),
+            Err(e) => eprintln!("写首启凭据文件失败: {e}"),
         }
     }
 
@@ -761,7 +820,7 @@ impl Store {
         let sign_key = crate::sign::sign_secret_with_nonce(&self.key, &nonce);
         // 锁顺序固定：先写密钥缓存（短锁，不与 data 交错），再落库
         *self.sign_key.write().unwrap() = sign_key;
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         data.sign_nonce = Some(nonce);
         self.save(&data)
     }
@@ -780,7 +839,7 @@ impl Store {
 
     /// 驱动回写 cookie / token
     pub fn update_credential(&self, id: &str, f: impl FnOnce(&mut Credential)) {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(acc) = data.accounts.iter_mut().find(|a| a.id == id) {
             f(&mut acc.cred);
             let _ = self.save(&data);
@@ -802,7 +861,7 @@ impl Store {
             }
             other => other,
         };
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         if user.is_some() {
             data.web_user = user;
         }
@@ -815,7 +874,7 @@ impl Store {
     /// 更新 OpenList 式静态 API 令牌（None = 保持原值），加密持久化到数据库。
     /// 令牌是「生成即打印一次」的凭据，调用方负责把明文同步到内存（见 state::AuthCfg）。
     pub fn update_api_token(&self, token: Option<String>) -> std::io::Result<()> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self.data.lock().unwrap_or_else(|e| e.into_inner());
         if token.is_some() {
             data.api_token = token;
         }
@@ -1120,5 +1179,88 @@ mod tests {
             "openlist-".len() + 36 + 1 + 64
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 编辑账号时驱动自管字段不能被请求体抹掉（AUDIT.md P1-3）
+    #[test]
+    fn merge_credential_keeps_driver_managed_fields() {
+        let old = Credential::Sftp {
+            address: "h:22".into(),
+            username: "u".into(),
+            password: "p".into(),
+            private_key: String::new(),
+            passphrase: String::new(),
+            root_path: "/d".into(),
+            ignore_symlink_error: false,
+            host_key_fingerprint: "SHA256:pin".into(),
+        };
+        let new = Credential::Sftp {
+            address: "h:22".into(),
+            username: "u".into(),
+            password: "p".into(),
+            private_key: String::new(),
+            passphrase: String::new(),
+            root_path: "/d".into(),
+            ignore_symlink_error: false,
+            host_key_fingerprint: String::new(),
+        };
+        match merge_credential(&old, new) {
+            Credential::Sftp {
+                host_key_fingerprint,
+                ..
+            } => assert_eq!(host_key_fingerprint, "SHA256:pin"),
+            _ => panic!("驱动类型不该变"),
+        }
+    }
+
+    /// 请求里显式给出的值优先
+    #[test]
+    fn merge_credential_prefers_explicit_value() {
+        let old = Credential::AliyundriveOpen {
+            refresh_token: "r".into(),
+            access_token: "stale".into(),
+            alipan_type: "default".into(),
+        };
+        let new = Credential::AliyundriveOpen {
+            refresh_token: "r".into(),
+            access_token: "fresh".into(),
+            alipan_type: "default".into(),
+        };
+        match merge_credential(&old, new) {
+            Credential::AliyundriveOpen { access_token, .. } => assert_eq!(access_token, "fresh"),
+            _ => panic!("驱动类型不该变"),
+        }
+    }
+
+    /// 驱动类型变更时不合并，采用请求值
+    #[test]
+    fn merge_credential_does_not_cross_drivers() {
+        let old = Credential::Quark {
+            cookie: "q".into(),
+        };
+        let new = Credential::Pan115 {
+            cookie: String::new(),
+        };
+        match merge_credential(&old, new) {
+            Credential::Pan115 { cookie } => assert!(cookie.is_empty()),
+            _ => panic!("应保留新驱动类型"),
+        }
+    }
+
+    /// 空串之外的旧值（如 access_token）在请求未提供时保留
+    #[test]
+    fn merge_credential_keeps_empty_omitted_token() {
+        let old = Credential::BaiduNetdisk {
+            refresh_token: "r".into(),
+            access_token: "tok".into(),
+        };
+        let new = Credential::BaiduNetdisk {
+            refresh_token: "r".into(),
+            access_token: String::new(),
+        };
+        match merge_credential(&old, new) {
+            Credential::BaiduNetdisk { access_token, .. } => assert_eq!(access_token, "tok"),
+            _ => panic!("驱动类型不该变"),
+        }
     }
 }

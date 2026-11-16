@@ -15,11 +15,19 @@ use std::path::{Path, PathBuf};
 
 pub struct Local {
     root_path: String,
+    /// canonical 化后的根，用于软链逃逸判断
+    root_real: PathBuf,
 }
 
 impl Local {
     pub fn new(root_path: String) -> Self {
-        Local { root_path }
+        // 与 ensure_inside_root 里的目标解析走同一套逻辑，避免 /tmp -> /private/tmp
+        // 这类系统软链导致两侧前缀不一致
+        let root_real = resolve_real(Path::new(&root_path));
+        Local {
+            root_path,
+            root_real,
+        }
     }
 
     /// 对齐 Init()：校验挂载目录存在且为目录
@@ -58,7 +66,9 @@ impl Local {
     pub async fn list(&self, parent_fid: &str) -> Result<Vec<Entry>, String> {
         let dir = self.resolve_dir(parent_fid);
         self.ensure_inside_root(&dir)?;
-        self.blocking("枚举目录", move || list_dir(&dir)).await
+        let root_real = self.root_real.clone();
+        self.blocking("枚举目录", move || list_dir(&dir, &root_real))
+            .await
     }
 
     pub async fn download(&self, e: &Entry) -> Result<DownloadInfo, String> {
@@ -82,15 +92,16 @@ impl Local {
         })
     }
 
-    /// 目标路径是否落在挂载目录内（防逃逸：拒绝 `..` 逃出 root_path）
-    ///
-    /// 纯词法判断（不解析符号链接）：调用方只能通过本驱动的 mkdir 建目录，
-    /// 无法自行创建软链，因此 root 内软链指向外部这条路径在 API 层不可达。
+    /// 目标路径是否落在挂载目录内：先做词法判断，再解析软链比对真实路径。
+    /// 只做词法判断会放行 root 内指向外部的软链（AUDIT.md P2-2）。
     fn ensure_inside_root(&self, p: &Path) -> Result<(), String> {
-        if lexically_inside(Path::new(&self.root_path), p) {
+        if !lexically_inside(Path::new(&self.root_path), p) {
+            return Err(format!("路径越界: {}", p.display()));
+        }
+        if resolve_real(p).starts_with(&self.root_real) {
             Ok(())
         } else {
-            Err(format!("路径越界: {}", p.display()))
+            Err(format!("路径越界（软链指向挂载目录之外）: {}", p.display()))
         }
     }
 
@@ -210,15 +221,43 @@ fn lexically_inside(root: &Path, p: &Path) -> bool {
     norm(p).starts_with(norm(root))
 }
 
+/// 解析软链后的真实路径；目标不存在时解析最近的已存在祖先再拼回剩余段
+fn resolve_real(p: &Path) -> PathBuf {
+    if let Ok(real) = std::fs::canonicalize(p) {
+        return real;
+    }
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = p.to_path_buf();
+    while let Some(parent) = cur.parent().map(Path::to_path_buf) {
+        if let Some(name) = cur.file_name() {
+            missing.push(name.to_os_string());
+        }
+        if let Ok(real) = std::fs::canonicalize(&parent) {
+            let mut out = real;
+            for seg in missing.iter().rev() {
+                out.push(seg);
+            }
+            return out;
+        }
+        cur = parent;
+    }
+    p.to_path_buf()
+}
+
 /// read_dir 枚举（同步实现，由 `blocking` 调用）
-fn list_dir(dir: &Path) -> Result<Vec<Entry>, String> {
+fn list_dir(dir: &Path, root_real: &Path) -> Result<Vec<Entry>, String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("读取目录 {} 失败: {e}", dir.display()))?;
     let mut out = Vec::new();
     for entry in rd {
         let Ok(entry) = entry else { continue };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        // 元数据失败（如悬空符号链接）直接跳过
+        // 软链一律按目标元数据判断，指向挂载目录之外的直接不列出
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false)
+            && !resolve_real(&path).starts_with(root_real)
+        {
+            continue;
+        }
         let Ok(meta) = entry.metadata() else { continue };
         let is_dir = meta.is_dir();
         let size = if is_dir { 0 } else { meta.len() };
@@ -263,14 +302,39 @@ fn move_on_fs(src: &Path, dst: &Path) -> Result<(), String> {
 
 /// 文件逐字节复制；目录递归复制（目标顶层是否已存在由调用方检查）
 fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    copy_tree_inner(src, dst, &mut seen, 0)
+}
+
+/// 递归上限：软链环会让 is_dir() 一路为真，必须在写满目标盘之前停下
+const MAX_COPY_DEPTH: usize = 64;
+
+fn copy_tree_inner(
+    src: &Path,
+    dst: &Path,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(format!("目录层级超过 {MAX_COPY_DEPTH}：{}", src.display()));
+    }
     if src.is_dir() {
+        let real = resolve_real(src);
+        if !seen.insert(real) {
+            return Err(format!("目录存在循环引用: {}", src.display()));
+        }
         std::fs::create_dir_all(dst)
             .map_err(|e| format!("创建目录 {} 失败: {e}", dst.display()))?;
         let rd =
             std::fs::read_dir(src).map_err(|e| format!("读取目录 {} 失败: {e}", src.display()))?;
         for item in rd {
             let Ok(item) = item else { continue };
-            copy_tree(&item.path(), &dst.join(item.file_name()))?;
+            copy_tree_inner(
+                &item.path(),
+                &dst.join(item.file_name()),
+                seen,
+                depth + 1,
+            )?;
         }
         Ok(())
     } else {
@@ -307,6 +371,47 @@ mod tests {
             d.resolve_dir("/tmp/root/sub"),
             PathBuf::from("/tmp/root/sub")
         );
+    }
+
+    /// root 内指向外部的软链必须被拒（AUDIT.md P2-2）
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escaping_root_is_rejected() {
+        let base = std::env::temp_dir().join(format!("olrs-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.txt"), b"x").unwrap();
+        let link = root.join("out");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink("/etc", &link).unwrap();
+
+        let d = Local::new(root.to_string_lossy().to_string());
+        assert!(d.ensure_inside_root(&root.join("a.txt")).is_ok());
+        let err = d.ensure_inside_root(&link).unwrap_err();
+        assert!(err.contains("路径越界"), "unexpected: {err}");
+        assert!(d.ensure_inside_root(&link.join("passwd")).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 目录内软链环让 copy 停止而不是无限复制（AUDIT.md P3-14）
+    #[cfg(unix)]
+    #[test]
+    fn copy_tree_stops_on_symlink_loop() {
+        let base = std::env::temp_dir().join(format!("olrs-loop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(".", src.join("loop")).unwrap();
+
+        let dst = base.join("dst");
+        let err = copy_tree(&src, &dst).unwrap_err();
+        assert!(
+            err.contains("循环引用") || err.contains("层级超过"),
+            "unexpected: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

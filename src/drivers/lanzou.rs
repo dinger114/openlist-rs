@@ -85,9 +85,11 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
 fn remove_notes(html: &str) -> String {
     let re = Regex::new(r"<!--.*?-->|[^:]//.*|/\*.*?\*/").unwrap();
     re.replace_all(html, |caps: &regex::Captures| {
+        // 按 char 判断，避免字节下标切在多字节字符中间（AUDIT.md P2-10）
         let b = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-        if b.len() >= 3 && &b[1..3] == "//" {
-            b[..1].to_string()
+        let chars: Vec<char> = b.chars().collect();
+        if chars.len() >= 3 && chars[1] == '/' && chars[2] == '/' {
+            chars[0].to_string()
         } else {
             "\n".to_string()
         }
@@ -301,7 +303,7 @@ impl Lanzou {
     }
 
     fn cookie(&self) -> String {
-        self.cookie.lock().unwrap().clone()
+        self.cookie.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn is_account(&self) -> bool {
@@ -364,7 +366,7 @@ impl Lanzou {
                 let info = v.get("info").and_then(|x| x.as_str()).unwrap_or("未知错误");
                 return Err(format!("蓝奏云登录失败: {info}"));
             }
-            *self.cookie.lock().unwrap() = cookies.join("; ");
+            *self.cookie.lock().unwrap_or_else(|e| e.into_inner()) = cookies.join("; ");
             return Ok(());
         }
         Err("蓝奏云登录 acw_sc__v2 验证失败".into())
@@ -434,8 +436,8 @@ impl Lanzou {
         loop {
             let url = format!(
                 "{BASE_URL}/doupload.php?uid={}&vei={}",
-                self.uid.lock().unwrap(),
-                self.vei.lock().unwrap()
+                self.uid.lock().unwrap_or_else(|e| e.into_inner()),
+                self.vei.lock().unwrap_or_else(|e| e.into_inner())
             );
             let body = self
                 .request(Method::POST, &url, Some(form), with_down_ip)
@@ -499,8 +501,8 @@ impl Lanzou {
             .find(|(k, _)| k == "vei")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        *self.uid.lock().unwrap() = uid;
-        *self.vei.lock().unwrap() = vei;
+        *self.uid.lock().unwrap_or_else(|e| e.into_inner()) = uid;
+        *self.vei.lock().unwrap_or_else(|e| e.into_inner()) = vei;
         Ok(())
     }
 

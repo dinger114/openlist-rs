@@ -59,12 +59,12 @@ impl Pan123Open {
     }
 
     fn save_tokens(&self, refresh: Option<&str>, access: &str) {
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         if let Some(r) = refresh {
-            *self.refresh_token.lock().unwrap() = r.to_string();
+            *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = r.to_string();
         }
         let (r, a) = (
-            self.refresh_token.lock().unwrap().clone(),
+            self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             access.to_string(),
         );
         let id = self.account_id.clone();
@@ -83,8 +83,8 @@ impl Pan123Open {
 
     async fn flush_access_token(&self) -> Result<(), String> {
         // 在线刷新
-        if self.use_online_api && !self.refresh_token.lock().unwrap().is_empty() {
-            let rt = self.refresh_token.lock().unwrap().clone();
+        if self.use_online_api && !self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
+            let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let url = format!(
                 "{}?refresh_ui={}&server_use=true&driver_txt=123cloud_oa",
                 self.api_address,
@@ -127,7 +127,7 @@ impl Pan123Open {
                 },
                 &access,
             );
-            *self.expired_at.lock().unwrap() =
+            *self.expired_at.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(Instant::now() + Duration::from_secs(90 * 24 * 3600));
             return Ok(());
         }
@@ -167,12 +167,12 @@ impl Pan123Open {
                 return Err("accessToken 为空".into());
             }
             self.save_tokens(None, &access);
-            *self.expired_at.lock().unwrap() =
+            *self.expired_at.lock().unwrap_or_else(|e| e.into_inner()) =
                 Some(Instant::now() + Duration::from_secs(90 * 24 * 3600));
             return Ok(());
         }
         // 已有 access_token 且未过期
-        if !self.access_token.lock().unwrap().is_empty() {
+        if !self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return Ok(());
         }
         Err("无有效授权方式：请配置 ClientID+ClientSecret 或 RefreshToken".into())
@@ -180,7 +180,7 @@ impl Pan123Open {
 
     async fn get_token(&self, force: bool) -> Result<String, String> {
         let need = force
-            || self.access_token.lock().unwrap().is_empty()
+            || self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
             || self
                 .expired_at
                 .lock()
@@ -194,11 +194,11 @@ impl Pan123Open {
             .unwrap()
             .map(|t| Instant::now() >= t)
             .unwrap_or(true);
-        if force || self.access_token.lock().unwrap().is_empty() || expired {
+        if force || self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() || expired {
             let _ = need;
             self.flush_access_token().await?;
         }
-        Ok(self.access_token.lock().unwrap().clone())
+        Ok(self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone())
     }
 
     async fn request(

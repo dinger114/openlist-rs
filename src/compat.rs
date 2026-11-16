@@ -66,6 +66,27 @@ pub(crate) fn obj_type(name: &str, is_dir: bool) -> i64 {
     T_UNKNOWN
 }
 
+/// 分页区间：page 从 1 起，per_page<=0 取全部；乘法用 saturating 避免溢出，倒序收敛为空区间
+fn page_bounds(page: i64, per_page: i64, total: usize) -> (usize, usize) {
+    let total_i = i64::try_from(total).unwrap_or(i64::MAX);
+    let per_page = if per_page <= 0 {
+        total_i.max(1)
+    } else {
+        per_page
+    };
+    let page = page.max(1);
+    let start = page
+        .saturating_sub(1)
+        .saturating_mul(per_page)
+        .clamp(0, total_i) as usize;
+    let end = page.saturating_mul(per_page).clamp(0, total_i) as usize;
+    if start > end {
+        (0, 0)
+    } else {
+        (start, end)
+    }
+}
+
 pub(crate) fn normalize_path(p: &str) -> String {
     let mut s = p.trim().to_string();
     if !s.starts_with('/') {
@@ -202,7 +223,7 @@ fn me_payload(username: &str) -> Value {
 impl AppState {
     /// 把目录 children 注册到路径索引
     fn index_children(&self, parent: &str, account_id: &str, children: &[Entry]) {
-        let mut idx = self.index.lock().unwrap();
+        let mut idx = self.index.lock().unwrap_or_else(|e| e.into_inner());
         for c in children {
             let key = format!("{parent}/{}", c.name);
             idx.insert(key, (account_id.to_string(), c.clone()));
@@ -217,7 +238,7 @@ impl AppState {
             return Err("根目录没有对应文件".into());
         }
         // 第一段 = 账号名
-        let accounts: Vec<Account> = self.store.data.lock().unwrap().accounts.clone();
+        let accounts: Vec<Account> = self.store.data.lock().unwrap_or_else(|e| e.into_inner()).accounts.clone();
         let Some(acc) = accounts.iter().find(|a| a.name == segs[0]) else {
             return Err(format!("找不到网盘账号: {}", segs[0]));
         };
@@ -229,7 +250,7 @@ impl AppState {
             ..Default::default()
         };
         {
-            let mut idx = self.index.lock().unwrap();
+            let mut idx = self.index.lock().unwrap_or_else(|e| e.into_inner());
             idx.insert(format!("/{}", segs[0]), (acc_id.clone(), entry.clone()));
         }
         let mut prefix = format!("/{}", segs[0]);
@@ -239,7 +260,7 @@ impl AppState {
             }
             let full = format!("{prefix}/{seg}");
             // 索引命中直接复用
-            if let Some(hit) = self.index.lock().unwrap().get(&full).cloned() {
+            if let Some(hit) = self.index.lock().unwrap_or_else(|e| e.into_inner()).get(&full).cloned() {
                 prefix = full;
                 entry = hit.1;
                 continue;
@@ -247,7 +268,7 @@ impl AppState {
             // 未命中：列出父目录并注册
             let children = self.list_dir_cached(&acc_id, &entry.fid, false).await?;
             self.index_children(&prefix, &acc_id, &children);
-            let hit = self.index.lock().unwrap().get(&full).cloned();
+            let hit = self.index.lock().unwrap_or_else(|e| e.into_inner()).get(&full).cloned();
             let Some(hit) = hit else {
                 return Err(format!("路径不存在: {full}"));
             };
@@ -287,7 +308,7 @@ impl AppState {
     async fn compat_list_dir(&self, path: &str, refresh: bool) -> Result<Vec<Entry>, String> {
         let path = normalize_path(path);
         if path == "/" {
-            let accounts: Vec<Account> = self.store.data.lock().unwrap().accounts.clone();
+            let accounts: Vec<Account> = self.store.data.lock().unwrap_or_else(|e| e.into_inner()).accounts.clone();
             return Ok(accounts
                 .iter()
                 .map(|a| Entry {
@@ -332,17 +353,17 @@ pub(crate) async fn compat_login(
 ) -> Response {
     let ip = peer.ip();
     let now = Instant::now();
-    if let Err(wait) = st.login_limiter.lock().unwrap().check(ip, now) {
+    if let Err(wait) = st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).check(ip, now) {
         return compat_err(
             format!("登录失败次数过多，请 {} 秒后再试", wait.as_secs().max(1)),
             429,
         );
     }
     if !crate::auth::verify_credentials(&st, &req.username, &req.password).await {
-        st.login_limiter.lock().unwrap().record_failure(ip, now);
+        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_failure(ip, now);
         return compat_err("用户名或密码错误", 400);
     }
-    st.login_limiter.lock().unwrap().record_success(ip);
+    st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_success(ip);
     let token = uuid::Uuid::new_v4().to_string() + &uuid::Uuid::new_v4().simple().to_string();
     st.issue_session(token.clone());
     (
@@ -378,15 +399,7 @@ pub(crate) async fn compat_fs_list(
     // 目录在前、按名称排序（官方由驱动决定顺序，这里保持稳定排序）
     sort_entries(&mut entries);
     let total = entries.len() as i64;
-    // 对齐官方 pagination: page 从 1 起，per_page<=0 返回全部
-    let per_page = if req.per_page <= 0 {
-        total.max(1)
-    } else {
-        req.per_page
-    };
-    let page = if req.page <= 0 { 1 } else { req.page };
-    let start = (((page - 1) * per_page).clamp(0, total)) as usize;
-    let end = ((page * per_page).clamp(0, total)) as usize;
+    let (start, end) = page_bounds(req.page, req.per_page, entries.len());
     let secret = st.store.sign_secret();
     let parent = normalize_path(&req.path);
     let content: Vec<Value> = entries[start..end]
@@ -499,7 +512,7 @@ pub(crate) async fn compat_fs_search(
     let parent = normalize_path(&req.parent);
     // 搜索根：(账号 id, 根 fid, 虚拟根路径)
     let roots: Vec<(String, String, String)> = if parent == "/" {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         data.accounts
             .iter()
             .map(|a| (a.id.clone(), a.root_fid.clone(), format!("/{}", a.name)))
@@ -552,15 +565,7 @@ pub(crate) async fn compat_fs_search(
         )
     });
     let total = hits.len() as i64;
-    // 分页与 /api/fs/list 同口径：page 从 1 起，per_page<=0 返回全部
-    let per_page = if req.per_page <= 0 {
-        total.max(1)
-    } else {
-        req.per_page
-    };
-    let page = if req.page <= 0 { 1 } else { req.page };
-    let start = (((page - 1) * per_page).clamp(0, total)) as usize;
-    let end = ((page * per_page).clamp(0, total)) as usize;
+    let (start, end) = page_bounds(req.page, req.per_page, hits.len());
     let content = search_content(&hits[start..end]);
     (
         StatusCode::OK,
@@ -630,7 +635,7 @@ pub(crate) async fn compat_fs_get(
     }
     // 查询账号的 server_proxy 开关
     let server_proxy = {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         data.accounts
             .iter()
             .find(|a| a.id == acc_id)
@@ -742,7 +747,7 @@ async fn compat_file(
 
     // 读取账号的 server_proxy 开关
     let server_proxy = {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         data.accounts
             .iter()
             .find(|a| a.id == acc_id)
@@ -835,7 +840,7 @@ impl AppState {
         if segs.is_empty() {
             return Err("路径为空".into());
         }
-        let accounts: Vec<Account> = self.store.data.lock().unwrap().accounts.clone();
+        let accounts: Vec<Account> = self.store.data.lock().unwrap_or_else(|e| e.into_inner()).accounts.clone();
         let Some(acc) = accounts.iter().find(|a| a.name == segs[0]) else {
             return Err(format!("找不到网盘账号: {}", segs[0]));
         };
@@ -883,6 +888,14 @@ impl AppState {
     /// 失效某账号某目录的列表缓存（key = "{账号id}:{fid}"）
     pub(crate) fn invalidate_dir_cache(&self, acc_id: &str, fid: &str) {
         self.list_cache.invalidate_key(&format!("{acc_id}:{fid}"));
+    }
+
+    /// 丢掉某账号在路径索引里的全部条目（账号改名/换根/删除后必须调用）
+    pub(crate) fn invalidate_index_account(&self, acc_id: &str) {
+        self.index
+            .lock()
+            .unwrap()
+            .retain(|_, (id, _)| id != acc_id);
     }
 }
 
@@ -1099,7 +1112,7 @@ async fn do_put(
         reader: Box::pin(super::drivers::ProgressReader::new(reader, progress)),
     };
     let r = driver.put(&dst_fid, input).await;
-    st.upload_progress.lock().unwrap().remove(&path);
+    st.upload_progress.lock().unwrap_or_else(|e| e.into_inner()).remove(&path);
     r?;
     st.invalidate_dir_cache(&acc_id, &dst_fid);
     Ok(())
@@ -1185,9 +1198,18 @@ pub(crate) async fn compat_fs_form(
         }
         fallback_name = field.file_name().unwrap_or("").to_string();
         let spool = async {
-            let mut f = tokio::fs::File::create(&tmp_path)
-                .await
+            // 临时文件仅本进程可读：默认 0644 会让同机其他用户读到上传内容
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let std_file = opts
+                .open(&tmp_path)
                 .map_err(|e| format!("创建临时文件失败: {e}"))?;
+            let mut f = tokio::fs::File::from_std(std_file);
             let mut field = field;
             while let Some(chunk) = field
                 .chunk()
@@ -1257,7 +1279,7 @@ pub(crate) async fn compat_fs_form(
 
 /// GET /api/fs/put/progress —— 活跃上传进度 { "<路径>": 已上传字节 }
 pub(crate) async fn compat_fs_put_progress(State(st): State<AppState>) -> Response {
-    let map = st.upload_progress.lock().unwrap();
+    let map = st.upload_progress.lock().unwrap_or_else(|e| e.into_inner());
     let mut data = serde_json::Map::new();
     for (k, v) in map.iter() {
         data.insert(k.clone(), json!(v.load(Ordering::Relaxed)));
@@ -1268,6 +1290,21 @@ pub(crate) async fn compat_fs_put_progress(State(st): State<AppState>) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 溢出与倒序都必须收敛到空区间，不能 panic（AUDIT.md P2-1）
+    #[test]
+    fn page_bounds_never_panics() {
+        assert_eq!(page_bounds(1, 5, 10), (0, 5));
+        assert_eq!(page_bounds(2, 5, 10), (5, 10));
+        assert_eq!(page_bounds(3, 5, 10), (10, 10));
+        // 原 panic 用例：page*per_page 溢出后 start>end
+        assert_eq!(page_bounds(922337203685477581, 10, 10), (10, 10));
+        assert_eq!(page_bounds(i64::MAX, i64::MAX, 5), (5, 5));
+        assert_eq!(page_bounds(i64::MIN, i64::MIN, 5), (0, 5));
+        // per_page<=0 取全部
+        assert_eq!(page_bounds(0, 0, 10), (0, 10));
+        assert_eq!(page_bounds(1, -5, 0), (0, 0));
+    }
 
     #[test]
     fn me_payload_matches_alist_shape() {

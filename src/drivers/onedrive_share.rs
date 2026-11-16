@@ -109,8 +109,8 @@ impl OnedriveShare {
         };
 
         *self.cookie.lock().await = cookie;
-        *self.download_prefix.lock().unwrap() = prefix;
-        *self.root_folder.lock().unwrap() = root;
+        *self.download_prefix.lock().unwrap_or_else(|e| e.into_inner()) = prefix;
+        *self.root_folder.lock().unwrap_or_else(|e| e.into_inner()) = root;
         Ok(())
     }
 
@@ -181,7 +181,7 @@ impl OnedriveShare {
             }
         }
         let cookie = self.cookie.lock().await.clone();
-        let root = self.root_folder.lock().unwrap().clone();
+        let root = self.root_folder.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if root.is_empty() {
             return Err("未能解析分享根路径，请确认链接有效".into());
         }
@@ -348,7 +348,7 @@ impl OnedriveShare {
             }
         }
         let cookie = self.cookie.lock().await.clone();
-        let prefix = self.download_prefix.lock().unwrap().clone();
+        let prefix = self.download_prefix.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let unique = e.etag.clone().unwrap_or_default();
         if prefix.is_empty() || unique.is_empty() {
             return Err("缺少下载前缀或 UniqueId，请重新打开目录".into());
@@ -463,6 +463,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

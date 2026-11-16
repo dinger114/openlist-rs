@@ -188,18 +188,18 @@ pub(crate) async fn login(
 ) -> Response {
     let ip = peer.ip();
     let now = Instant::now();
-    if let Err(wait) = st.login_limiter.lock().unwrap().check(ip, now) {
+    if let Err(wait) = st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).check(ip, now) {
         return rate_limited(wait);
     }
     if !verify_credentials(&st, &req.username, &req.password).await {
-        st.login_limiter.lock().unwrap().record_failure(ip, now);
+        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_failure(ip, now);
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "用户名或密码错误" })),
         )
             .into_response();
     }
-    st.login_limiter.lock().unwrap().record_success(ip);
+    st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_success(ip);
     let token = issue_session(&st);
     // 反代 HTTPS 场景（X-Forwarded-Proto: https）必须给会话 Cookie 加 Secure，
     // 否则浏览器可能经 http:// 同域明文回传 Cookie 被截获。项目本身只提供明文
@@ -330,24 +330,82 @@ pub(crate) async fn update_web_settings(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// GET /api/web/token —— 设置页展示当前 API 令牌。
+/// 长命凭据导出前的二次确认（读取/重置令牌、导出网盘凭据共用）。
 ///
-/// 落在 `auth_guard` 之后，只有面板会话或令牌本身能读到；令牌等价管理员权限，
-/// 所以不放进任何公开接口，也不出现在启动日志里（除首次生成那一次）。
-pub(crate) async fn get_api_token(State(st): State<AppState>) -> Json<serde_json::Value> {
-    Json(json!({ "token": st.api_token() }))
+/// 令牌本身依旧永不过期；这里只是要求「复制走一枚长命凭据」也要出示当前口令，
+/// 避免仅凭被劫持的会话就拿到一份改密后依然有效的凭据（AUDIT.md P2-3）。
+/// 失败会计入登录限速，防止用会话爆破口令。
+#[derive(Deserialize)]
+pub(crate) struct ReauthReq {
+    #[serde(default)]
+    pub(crate) old_password: Option<String>,
 }
 
-/// POST /api/web/token/reset —— 重置 API 令牌，旧令牌立即失效。
+pub(crate) async fn confirm_password(
+    st: &AppState,
+    ip: std::net::IpAddr,
+    req: &ReauthReq,
+) -> Result<(), Response> {
+    let now = Instant::now();
+    if let Err(wait) = st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).check(ip, now) {
+        return Err(rate_limited(wait));
+    }
+    let old = req.old_password.as_deref().unwrap_or("");
+    if old.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "需要提供当前密码" })),
+        )
+            .into_response());
+    }
+    let user = st.auth.read().unwrap().user.clone();
+    if !verify_credentials(st, &user, old).await {
+        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_failure(ip, now);
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "当前密码不正确" })),
+        )
+            .into_response());
+    }
+    st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_success(ip);
+    Ok(())
+}
+
+/// POST /api/web/token —— 设置页展示当前 API 令牌（需当前口令确认）。
+pub(crate) async fn get_api_token(
+    State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<ReauthReq>,
+) -> Response {
+    if let Err(resp) = confirm_password(&st, peer.ip(), &req).await {
+        return resp;
+    }
+    let mut resp = Json(json!({ "token": st.api_token() })).into_response();
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    resp
+}
+
+/// POST /api/web/token/reset —— 重置 API 令牌，旧令牌立即失效（需当前口令确认）。
 ///
 /// 不动会话表：令牌与面板会话是两套凭据，重置令牌不该把当前用户踢下线。
 /// 也不影响直链签名（`?sign=` 的密钥由存储密钥派生，见 src/sign.rs）。
 pub(crate) async fn reset_api_token(
     State(st): State<AppState>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    st.reset_api_token()
-        .map(|token| Json(json!({ "token": token })))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("保存失败: {e}")))
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<ReauthReq>,
+) -> Response {
+    if let Err(resp) = confirm_password(&st, peer.ip(), &req).await {
+        return resp;
+    }
+    match st.reset_api_token() {
+        Ok(token) => Json(json!({ "token": token })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": format!("保存失败: {e}") })),
+        )
+            .into_response(),
+    }
 }
 
 /// POST /api/web/sign-key/reset —— 重置直链签名盐。

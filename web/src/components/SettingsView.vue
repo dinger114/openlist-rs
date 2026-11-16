@@ -238,8 +238,15 @@ async function importBackup() {
   importError.value = ''
   importOk.value = false
   try {
+    // 恢复会整份替换面板口令，需要再确认一次当前密码
+    const currentPassword = window.prompt('请输入当前面板密码以确认恢复')
+    if (!currentPassword) {
+      importing.value = false
+      return
+    }
     const fd = new FormData()
     fd.append('file', selectedFile.value)
+    fd.append('old_password', currentPassword)
     if (importPassword.value) {
       fd.append('password', importPassword.value)
     }

@@ -97,7 +97,7 @@ impl Pan123Link {
         } else {
             parent_fid
         };
-        let root = self.root.lock().unwrap();
+        let root = self.root.lock().unwrap_or_else(|e| e.into_inner());
         let node = get_node_from_root(&root, path).ok_or_else(|| format!("路径不存在: {path}"))?;
         if node.is_file() {
             return Err("不是目录".into());
@@ -144,7 +144,7 @@ impl Pan123Link {
             .map(|s| s.to_string())
             .or_else(|| {
                 // 回退：从树中按 fid 查
-                let root = self.root.lock().unwrap();
+                let root = self.root.lock().unwrap_or_else(|e| e.into_inner());
                 get_node_from_root(&root, &e.fid).map(|n| n.url.clone())
             })
             .filter(|u| !u.is_empty())

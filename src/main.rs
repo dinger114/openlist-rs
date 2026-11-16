@@ -23,6 +23,11 @@ use clap::{Parser, Subcommand};
 use state::AppState;
 use std::io::{BufRead, Write};
 
+/// 登录等纯 JSON 端点的请求体上限
+const BODY_LIMIT_JSON: usize = 64 * 1024;
+/// 上传与 WebDAV PUT 的请求体上限
+const BODY_LIMIT_UPLOAD: usize = 8 * 1024 * 1024 * 1024;
+
 /// 未匹配路径的兜底：`/api/*` 回 JSON 404，其余交给前端静态资源。
 ///
 /// 不能把未知的 API 路径也交给 SPA 兜底 —— 客户端拿到 index.html 当 JSON 解析，
@@ -58,9 +63,10 @@ async fn security_headers(
         h("referrer-policy"),
         axum::http::HeaderValue::from_static("strict-origin-when-cross-origin"),
     );
-    headers.insert(
-        h("content-security-policy"),
-        axum::http::HeaderValue::from_static(
+    // 文件下载/预览响应会自己带更严格的沙箱 CSP，这里不覆盖
+    headers
+        .entry(h("content-security-policy"))
+        .or_insert(axum::http::HeaderValue::from_static(
             "default-src 'self'; \
              img-src 'self' data: blob: https:; \
              media-src 'self' blob: https:; \
@@ -70,8 +76,7 @@ async fn security_headers(
              frame-ancestors 'none'; \
              object-src 'none'; \
              base-uri 'self'",
-        ),
-    );
+        ));
     resp
 }
 
@@ -167,14 +172,18 @@ async fn main() {
         .route("/api/search", get(api::search_files))
         .route("/api/download", get(api::get_download))
         .route("/api/stream", get(api::stream_file))
-        .route("/api/login", post(auth::login))
+        .route(
+            "/api/login",
+            post(auth::login).layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_JSON)),
+        )
         .route("/api/logout", post(auth::logout))
         .route("/api/auth/status", get(auth::auth_status))
         // 面板账号设置（设置页）
         .route("/api/web/user", get(auth::get_web_user))
         .route("/api/web/settings", post(auth::update_web_settings))
         // API 令牌（OpenList 式静态凭据，供 ostrm / AList 客户端 / WebDAV 使用）
-        .route("/api/web/token", get(auth::get_api_token))
+        // 读取与重置都要求当前口令确认，令牌本身依旧永不过期
+        .route("/api/web/token", post(auth::get_api_token))
         .route("/api/web/token/reset", post(auth::reset_api_token))
         // 直链签名盐：重置后所有已发出的 ?sign= 链接失效（与令牌解耦）
         .route("/api/web/sign-key/reset", post(auth::reset_sign_key))
@@ -189,7 +198,10 @@ async fn main() {
             ),
         )
         // OpenList 官方 API 兼容层（NovaTV/TVBox 等 AList 协议客户端）
-        .route("/api/auth/login", post(compat::compat_login))
+        .route(
+            "/api/auth/login",
+            post(compat::compat_login).layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_JSON)),
+        )
         .route("/api/me", get(compat::compat_me))
         .route("/api/fs/list", post(compat::compat_fs_list))
         .route("/api/fs/get", post(compat::compat_fs_get))
@@ -204,11 +216,15 @@ async fn main() {
         .route("/api/fs/remove", post(compat::compat_fs_remove))
         .route(
             "/api/fs/put",
-            post(compat::compat_fs_put).put(compat::compat_fs_put),
+            post(compat::compat_fs_put)
+                .put(compat::compat_fs_put)
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_UPLOAD)),
         )
         .route(
             "/api/fs/form",
-            post(compat::compat_fs_form).put(compat::compat_fs_form),
+            post(compat::compat_fs_form)
+                .put(compat::compat_fs_form)
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_UPLOAD)),
         )
         .route("/api/fs/put/progress", get(compat::compat_fs_put_progress))
         // 原生离线下载（供应商侧任务，见 src/offline.rs）
@@ -220,22 +236,31 @@ async fn main() {
         .route("/p/{*path}", get(compat::compat_proxy))
         // WebDAV 服务（自带 Basic/Bearer 鉴权，见 src/webdav.rs）
         // `/dav/` 必须单独注册：catch-all 段不匹配空路径，否则带尾斜杠的请求会掉到前端兜底
-        .route("/dav", axum::routing::any(webdav::handle_root))
-        .route("/dav/", axum::routing::any(webdav::handle_root))
-        .route("/dav/{*path}", axum::routing::any(webdav::handle_path))
-        // 上传需要大请求体（axum 默认 2MB 会让稍大的文件直接 400），但绝不等于无上限：
-        // 全局给 8GB 兜底，备份恢复单独限 512MB（见下面的路由级 layer）。
-        // /api/fs/put 是流式转发不受此限影响；/api/fs/form 走 multipart 提取器，受此保护。
-        .layer(axum::extract::DefaultBodyLimit::max(
-            8 * 1024 * 1024 * 1024,
-        ))
+        .route(
+            "/dav",
+            axum::routing::any(webdav::handle_root)
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_UPLOAD)),
+        )
+        .route(
+            "/dav/",
+            axum::routing::any(webdav::handle_root)
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_UPLOAD)),
+        )
+        .route(
+            "/dav/{*path}",
+            axum::routing::any(webdav::handle_path)
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT_UPLOAD)),
+        )
+        // 请求体上限按路由配置（见 BODY_LIMIT_*）：只有上传路径放大到 8GB，
+        // 其余走 axum 默认 2MB，登录端点 64KB。
+        // fallback 必须在 layer 之前注册，否则前端静态资源与 SPA 兜底不带安全响应头
+        .fallback(fallback_handler)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_guard,
         ))
         // 安全响应头放在最外层（后注册的 layer 在外层），确保 401/404 也带
         .layer(axum::middleware::from_fn(security_headers))
-        .fallback(fallback_handler)
         .with_state(state);
 
     let addr = format!("{}:{}", args.addr, args.port);
@@ -289,7 +314,7 @@ fn run_command(cmd: Cmd, dir: &str) {
             let store = config::Store::load(dir);
             // 数据库尚无密码时补一个随机密码，避免出现“有账号无密码”
             let need_pass = {
-                let data = store.data.lock().unwrap();
+                let data = store.data.lock().unwrap_or_else(|e| e.into_inner());
                 data.web_pass.as_deref().map(str::is_empty).unwrap_or(true)
             };
             let pass = if need_pass {
@@ -309,7 +334,7 @@ fn run_command(cmd: Cmd, dir: &str) {
             let store = config::Store::load(dir);
             // 数据库尚无账号时补默认 admin，避免出现“有密码无账号”
             let need_user = {
-                let data = store.data.lock().unwrap();
+                let data = store.data.lock().unwrap_or_else(|e| e.into_inner());
                 data.web_user.as_deref().map(str::is_empty).unwrap_or(true)
             };
             let user = if need_user {

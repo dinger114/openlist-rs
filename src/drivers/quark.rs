@@ -96,7 +96,7 @@ impl QuarkOrUC {
     }
 
     fn cookie(&self) -> String {
-        self.cookie.lock().unwrap().clone()
+        self.cookie.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 响应 Set-Cookie 里的 __puus 会滚动更新，必须回写，否则旧 cookie 很快失效
@@ -115,7 +115,7 @@ impl QuarkOrUC {
             }
         }
         if let Some(puus) = updated {
-            let mut c = self.cookie.lock().unwrap();
+            let mut c = self.cookie.lock().unwrap_or_else(|e| e.into_inner());
             let new_cookie = replace_cookie_value(&c, "__puus", &puus);
             *c = new_cookie;
             let snapshot = c.clone();
@@ -184,7 +184,12 @@ impl QuarkOrUC {
         let mut files = Vec::new();
         let mut page: u32 = 1;
         let size: u32 = 100;
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let query: Vec<(String, String)> = vec![
                 ("pdir_fid".into(), parent_fid.to_string()),
                 ("_size".into(), size.to_string()),

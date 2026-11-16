@@ -174,10 +174,16 @@ impl Ftp {
         let tmp2 = tmp.clone();
         self.with_conn(move |c| {
             Box::pin(async move {
-                let data = pasv_retr(c, &remote).await?;
-                tokio::fs::write(&tmp2, &data)
+                // 边收边写盘：大文件不再先读进 Vec（AUDIT.md P2-12）
+                let mut data = pasv_reply(c, "RETR", &remote).await?;
+                let mut f = tokio::fs::File::create(&tmp2)
+                    .await
+                    .map_err(|e| format!("创建临时文件失败: {e}"))?;
+                tokio::io::copy(&mut data, &mut f)
                     .await
                     .map_err(|e| format!("写临时文件失败: {e}"))?;
+                drop(data);
+                let _ = read_response(&mut c.control).await;
                 Ok(())
             })
         })
@@ -213,6 +219,7 @@ impl Ftp {
     }
 
     pub async fn rename(&self, _parent_fid: &str, e: &Entry, new_name: &str) -> Result<(), String> {
+        super::validate_name(new_name)?;
         let src = self.resolve(&e.fid);
         let parent = match src.rfind('/') {
             Some(i) => &src[..i],
@@ -309,6 +316,7 @@ impl Ftp {
     }
 
     pub async fn put(&self, dst_dir_fid: &str, mut input: PutInput) -> Result<(), String> {
+        super::validate_name(&input.name)?;
         let remote = encode_path(
             &format!(
                 "{}/{}",
@@ -363,6 +371,38 @@ async fn write_cmd_bytes(control: &mut BufReader<TcpStream>, cmd: &[u8]) -> Resu
 
 /// 多行响应累计上限：恶意/故障 FTP 服务器可以无限推送 `123-` 续行把内存吃光
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+/// 控制通道单行上限
+const MAX_LINE_BYTES: usize = 8 * 1024;
+/// 目录列表数据上限（LIST 输出，不是文件内容）
+const MAX_LIST_BYTES: u64 = 32 * 1024 * 1024;
+
+/// 读一行（到 \n 为止），超过上限直接报错 —— read_line 会让无 CRLF 的响应无限增长
+async fn read_line_bounded(r: &mut BufReader<TcpStream>, max: usize) -> Result<String, String> {
+        let mut out: Vec<u8> = Vec::new();
+    loop {
+        let buf = r
+            .fill_buf()
+            .await
+            .map_err(|e| format!("读 FTP 响应失败: {e}"))?;
+        if buf.is_empty() {
+            break;
+        }
+        let (chunk, done) = match buf.iter().position(|&b| b == b'\n') {
+            Some(i) => (&buf[..=i], true),
+            None => (buf, false),
+        };
+        out.extend_from_slice(chunk);
+        let n = chunk.len();
+        r.consume(n);
+        if out.len() > max {
+            return Err(format!("FTP 单行响应超过 {max} 字节上限（疑似恶意服务器）"));
+        }
+        if done {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&out).to_string())
+}
 
 async fn read_response(control: &mut BufReader<TcpStream>) -> Result<FtpResp, String> {
     let mut message = String::new();
@@ -373,15 +413,12 @@ async fn read_response(control: &mut BufReader<TcpStream>) -> Result<FtpResp, St
                 "FTP 响应超过 {MAX_RESPONSE_BYTES} 字节上限（疑似恶意服务器）"
             ));
         }
-        let mut line = String::new();
-        control
-            .read_line(&mut line)
-            .await
-            .map_err(|e| format!("读 FTP 响应失败: {e}"))?;
+        let line = read_line_bounded(control, MAX_LINE_BYTES).await?;
         if line.len() < 3 {
             continue;
         }
-        let c: u16 = line[0..3].parse().unwrap_or(0);
+        let Some(head) = line.get(0..3) else { continue };
+        let c: u16 = head.parse().unwrap_or(0);
         if code == 0 {
             code = c;
         }
@@ -440,35 +477,34 @@ async fn pasv_open(c: &mut FtpConn) -> Result<TcpStream, String> {
 }
 
 async fn pasv_list(c: &mut FtpConn, cmd: &[u8]) -> Result<Vec<u8>, String> {
-    let mut data = pasv_open(c).await?;
+    let data = pasv_open(c).await?;
     write_cmd_bytes(&mut c.control, cmd).await?;
     let r = read_response(&mut c.control).await?;
     if r.code != 150 && r.code != 125 {
         return Err(format!("LIST 失败: {} {}", r.code, r.message));
     }
     let mut buf = Vec::new();
-    data.read_to_end(&mut buf)
-        .await
-        .map_err(|e| format!("读 LIST 数据失败: {e}"))?;
-    drop(data);
+    // 目录列表不该有几十 MB，超限说明服务器异常
+    {
+        use tokio::io::AsyncReadExt;
+        data.take(MAX_LIST_BYTES)
+            .read_to_end(&mut buf)
+            .await
+            .map_err(|e| format!("读 LIST 数据失败: {e}"))?;
+    }
     let _ = read_response(&mut c.control).await?;
     Ok(buf)
 }
 
-async fn pasv_retr(c: &mut FtpConn, path: &[u8]) -> Result<Vec<u8>, String> {
-    let mut data = pasv_open(c).await?;
-    write_cmd_bytes(&mut c.control, &cmd_with_path("RETR", path)).await?;
+/// 打开数据连接并发送 RETR/LIST 类命令，返回已就绪的数据流（调用方负责消费）
+async fn pasv_reply(c: &mut FtpConn, verb: &str, path: &[u8]) -> Result<TcpStream, String> {
+    let data = pasv_open(c).await?;
+    write_cmd_bytes(&mut c.control, &cmd_with_path(verb, path)).await?;
     let r = read_response(&mut c.control).await?;
     if r.code != 150 && r.code != 125 {
-        return Err(format!("RETR 失败: {} {}", r.code, r.message));
+        return Err(format!("{verb} 失败: {} {}", r.code, r.message));
     }
-    let mut buf = Vec::new();
-    data.read_to_end(&mut buf)
-        .await
-        .map_err(|e| format!("读 RETR 数据失败: {e}"))?;
-    drop(data);
-    let _ = read_response(&mut c.control).await?;
-    Ok(buf)
+    Ok(data)
 }
 
 async fn pasv_stor(c: &mut FtpConn, path: &[u8], body: &[u8]) -> Result<(), String> {

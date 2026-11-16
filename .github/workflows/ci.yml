@@ -85,6 +85,28 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  # Job 3:依赖漏洞扫描（RustSec 公告库）。不用第三方 Action，直接装 cargo-audit，
+  # 避免为一个检查再引入一条需要 pin SHA 的供应链。
+  audit:
+    name: cargo audit
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ci
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit --deny warnings
+
   # Job 3:单元测试(驱动内的纯函数测试:m115 加密、时间解析等)
   test:
     name: cargo test

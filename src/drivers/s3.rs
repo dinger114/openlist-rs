@@ -854,12 +854,13 @@ fn parse_rfc3339_ms(s: &str) -> Option<i64> {
     if s.len() < 19 {
         return None;
     }
-    let y: i64 = s[0..4].parse().ok()?;
-    let mo: i64 = s[5..7].parse().ok()?;
-    let d: i64 = s[8..10].parse().ok()?;
-    let h: i64 = s[11..13].parse().ok()?;
-    let mi: i64 = s[14..16].parse().ok()?;
-    let se: i64 = s[17..19].parse().ok()?;
+    let part = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let y = part(0..4)?;
+    let mo = part(5..7)?;
+    let d = part(8..10)?;
+    let h = part(11..13)?;
+    let mi = part(14..16)?;
+    let se = part(17..19)?;
     // rough days from epoch
     let days = days_from_civil(y as i32, mo as u32, d as u32);
     Some((days as i64 * 86400 + h * 3600 + mi * 60 + se) * 1000)
@@ -879,6 +880,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

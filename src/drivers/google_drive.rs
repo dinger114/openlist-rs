@@ -66,8 +66,8 @@ impl GoogleDrive {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -84,7 +84,7 @@ impl GoogleDrive {
     }
 
     fn access_token(&self) -> String {
-        self.access_token.lock().unwrap().clone()
+        self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 根目录 fid：配置了 root_folder_id 用之，否则 "root"（对齐 Go 版 DefaultRoot）
@@ -98,7 +98,7 @@ impl GoogleDrive {
 
     /// 对齐 Go 版 refreshToken()：olist 在线 API 刷新
     async fn refresh_token(&self) -> Result<(), String> {
-        let cur = self.refresh_token.lock().unwrap().clone();
+        let cur = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!(
             "{}?refresh_ui={}&server_use=true&driver_txt=googleui_go",
             ONLINE_REFRESH_API,
@@ -207,7 +207,12 @@ impl GoogleDrive {
         };
         let mut files = Vec::new();
         let mut page_token = String::new();
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let mut params: Vec<(String, String)> = vec![
                 (
                     "orderBy".into(),

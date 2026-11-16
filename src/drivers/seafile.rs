@@ -56,7 +56,7 @@ impl Seafile {
     }
 
     fn save_token(&self, token: &str) {
-        *self.token.lock().unwrap() = token.to_string();
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = token.to_string();
         let t = token.to_string();
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -68,7 +68,7 @@ impl Seafile {
 
     /// Token 优先；否则账号密码换 Token
     async fn get_token(&self) -> Result<String, String> {
-        let cur = self.token.lock().unwrap().clone();
+        let cur = self.token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if !cur.is_empty() {
             return Ok(cur);
         }
@@ -573,7 +573,7 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }
 

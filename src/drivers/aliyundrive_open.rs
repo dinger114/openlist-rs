@@ -88,8 +88,8 @@ impl AliyundriveOpen {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -106,12 +106,12 @@ impl AliyundriveOpen {
     }
 
     fn access_token(&self) -> String {
-        self.access_token.lock().unwrap().clone()
+        self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 对齐 Go 版 refreshToken()：走在线刷新 API
     async fn refresh_token(&self) -> Result<(), String> {
-        let cur = self.refresh_token.lock().unwrap().clone();
+        let cur = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!(
             "{}?refresh_ui={}&server_use=true&driver_txt={}",
             ONLINE_REFRESH_API,
@@ -213,7 +213,7 @@ impl AliyundriveOpen {
             .find_map(|k| res.get(k).and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string();
-        *self.drive_id.lock().unwrap() = drive_id;
+        *self.drive_id.lock().unwrap_or_else(|e| e.into_inner()) = drive_id;
         Ok(())
     }
 
@@ -224,10 +224,15 @@ impl AliyundriveOpen {
             "" | "0" => "root",
             other => other,
         };
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut files = Vec::new();
         let mut marker = String::new();
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let body = json!({
                 "drive_id": drive_id,
                 "limit": 200,
@@ -288,7 +293,7 @@ impl AliyundriveOpen {
 
     /// 对齐 Go 版 Link()：POST /adrive/v1.0/openFile/getDownloadUrl
     pub async fn download(&self, e: &Entry) -> Result<DownloadInfo, String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -324,7 +329,7 @@ impl AliyundriveOpen {
     /// 对齐 Go 版 MakeDir()：POST /adrive/v1.0/openFile/create
     /// （type=folder，check_name_mode=refuse）
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "parent_file_id": norm_fid(parent_fid),
@@ -344,7 +349,7 @@ impl AliyundriveOpen {
 
     /// 对齐 Go 版 Rename()：POST /adrive/v1.0/openFile/update
     pub async fn rename(&self, _parent_fid: &str, e: &Entry, new_name: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -367,7 +372,7 @@ impl AliyundriveOpen {
         e: &Entry,
         dst_dir_fid: &str,
     ) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -391,7 +396,7 @@ impl AliyundriveOpen {
         e: &Entry,
         dst_dir_fid: &str,
     ) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -411,7 +416,7 @@ impl AliyundriveOpen {
     /// 对齐 Go 版 Remove()：POST /adrive/v1.0/openFile/recyclebin/trash
     /// （Rust 版未暴露 remove_way 配置，固定进回收站，对齐 Go 版默认值）
     pub async fn remove(&self, _parent_fid: &str, e: &Entry) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -439,7 +444,7 @@ impl AliyundriveOpen {
         let _guard = TempFileGuard(tmp_path.clone());
         let (size, pre_hash, full_sha1) = spool_and_sha1(input.reader, &tmp_path).await?;
 
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let part_size = cal_part_size(size);
         let count: u64 = size.div_ceil(part_size);
         // Go 用文件 mtime/ctime；上传流没有时间信息，用当前 UTC 时间

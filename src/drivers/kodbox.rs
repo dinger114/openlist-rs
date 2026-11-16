@@ -35,11 +35,11 @@ impl Kodbox {
 
     fn save_token(&self, token: &str) {
         // 对齐 Go 版：accessToken 仅保存在驱动实例内存中，不落盘
-        *self.authorization.lock().unwrap() = token.to_string();
+        *self.authorization.lock().unwrap_or_else(|e| e.into_inner()) = token.to_string();
     }
 
     async fn get_token(&self) -> Result<String, String> {
-        let cur = self.authorization.lock().unwrap().clone();
+        let cur = self.authorization.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if !cur.is_empty() {
             return Ok(cur);
         }
@@ -112,7 +112,7 @@ impl Kodbox {
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
         // code 为字符串且为 10001 → token 过期，重登再试
         if v.get("code").and_then(|c| c.as_str()) == Some("10001") {
-            self.authorization.lock().unwrap().clear();
+            self.authorization.lock().unwrap_or_else(|e| e.into_inner()).clear();
             let token = self.login().await?;
             let resp = send(token)
                 .send()
@@ -355,7 +355,7 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }
 

@@ -58,8 +58,8 @@ impl YandexDisk {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -77,7 +77,7 @@ impl YandexDisk {
 
     /// 刷新 token：默认 olist 在线 API；否则用 client_id/secret 走官方 OAuth
     async fn refresh_token(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if self.use_online_api {
             let url = format!(
                 "{}?refresh_ui={}&server_use=true&driver_txt=yandexui_go",
@@ -177,7 +177,7 @@ impl YandexDisk {
         url: String,
         query: Option<Vec<(String, String)>>,
     ) -> Result<(u16, Value), String> {
-        let token = self.access_token.lock().unwrap().clone();
+        let token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = self
             .http
             .request(method, &url)
@@ -474,7 +474,7 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }
 

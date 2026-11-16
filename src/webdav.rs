@@ -98,7 +98,8 @@ async fn dispatch(
     };
     resp.headers_mut().insert(
         header::HeaderName::from_static("dav"),
-        header::HeaderValue::from_static("1, 2"),
+        // 未实现 If: 锁校验，不能对外宣称 class 2（AUDIT.md P2-16）
+        header::HeaderValue::from_static("1"),
     );
     resp.headers_mut().insert(
         header::HeaderName::from_static("ms-author-via"),
@@ -142,7 +143,7 @@ async fn authorize(
     headers: &HeaderMap,
 ) -> Result<(), Box<Response>> {
     let now = std::time::Instant::now();
-    if let Err(wait) = st.login_limiter.lock().unwrap().check(ip, now) {
+    if let Err(wait) = st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).check(ip, now) {
         return Err(Box::new(
             (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -163,10 +164,10 @@ async fn authorize(
         return Err(Box::new(unauthorized()));
     };
     if crate::auth::verify_credentials(st, &user, &pass).await {
-        st.login_limiter.lock().unwrap().record_success(ip);
+        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_success(ip);
         Ok(())
     } else {
-        st.login_limiter.lock().unwrap().record_failure(ip, now);
+        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_failure(ip, now);
         Err(Box::new(unauthorized()))
     }
 }
@@ -222,12 +223,23 @@ fn href_encode(path: &str) -> String {
     out
 }
 
+/// XML 1.0 只允许 TAB/LF/CR 三个控制字符，其余必须剔除，
+/// 否则一个带控制字符的文件名会让整个 multistatus 解析失败（AUDIT.md P2-16）
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            '\t' | '\n' | '\r' => out.push(c),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 const MONTHS: [&str; 12] = [
@@ -390,7 +402,7 @@ async fn propfind(st: &AppState, raw_path: &str, depth: u32, headers: &HeaderMap
         if depth == 0 {
             return multistatus_response(&[root], false);
         }
-        let accounts = st.store.data.lock().unwrap().accounts.clone();
+        let accounts = st.store.data.lock().unwrap_or_else(|e| e.into_inner()).accounts.clone();
         let mut items: Vec<(String, Entry)> = vec![root];
         for a in accounts.iter().filter(|a| a.enabled) {
             items.push((
@@ -432,17 +444,44 @@ async fn propfind(st: &AppState, raw_path: &str, depth: u32, headers: &HeaderMap
 }
 
 /// 驱动错误 → DAV 状态码（驱动侧暂无错误枚举，按关键字粗分；有枚举后替换）
+/// 驱动错误 → 状态码。
+///
+/// 上游凭据失效必须给带质询头的 401，否则 Finder / 资源管理器会拿面板口令反复重试；
+/// 账号不存在、路径不是目录这类客户端可修正的问题不能落到 502（AUDIT.md P2-16）。
 fn map_driver_error(msg: &str) -> Response {
-    let code = if msg.contains("不存在") || msg.contains("not found") {
+    if msg.contains("cookie") || msg.contains("token") || msg.contains("未登录") {
+        let mut resp = (StatusCode::UNAUTHORIZED, "上游存储凭据已失效").into_response();
+        resp.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            header::HeaderValue::from_static("Basic realm=\"OpenList\""),
+        );
+        return resp;
+    }
+    let code = if msg.contains("不存在")
+        || msg.contains("not found") || msg.contains("找不到")
+        || msg.contains("不是目录")
+        || msg.contains("路径不存在")
+    {
         StatusCode::NOT_FOUND
-    } else if msg.contains("只读") || msg.contains("不支持") || msg.contains("未实现") {
+    } else if msg.contains("已禁用")
+        || msg.contains("账号不可用")
+        || msg.contains("只读")
+        || msg.contains("不支持")
+        || msg.contains("未实现")
+    {
         StatusCode::FORBIDDEN
-    } else if msg.contains("cookie") || msg.contains("token") || msg.contains("未登录") {
-        StatusCode::UNAUTHORIZED
+    } else if msg.contains("已存在") {
+        StatusCode::CONFLICT
     } else {
+        // 内部细节不再回给客户端
         StatusCode::BAD_GATEWAY
     };
-    (code, msg.to_string()).into_response()
+    let text = if code == StatusCode::BAD_GATEWAY {
+        "上游存储请求失败".to_string()
+    } else {
+        msg.to_string()
+    };
+    (code, text).into_response()
 }
 
 // ---------- GET / HEAD ----------
@@ -497,7 +536,7 @@ async fn get_file(st: &AppState, raw_path: &str, headers: &HeaderMap, head_only:
     }
 
     let server_proxy = {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         data.accounts
             .iter()
             .find(|a| a.id == acc_id)
@@ -683,6 +722,20 @@ async fn move_or_copy(
     if dest_exists && !overwrite {
         return (StatusCode::PRECONDITION_FAILED, "目标已存在且 Overwrite: F").into_response();
     }
+    // COPY 的 Depth: 0 只复制集合本身（RFC 4918 9.8.3），本实现做不到，明确拒绝
+    if !is_move {
+        let depth = headers
+            .get("depth")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("infinity");
+        if depth.trim() == "0" && dest_exists {
+            return (
+                StatusCode::BAD_REQUEST,
+                "COPY 不支持 Depth: 0 覆盖已存在的集合",
+            )
+                .into_response();
+        }
+    }
 
     let (acc_id, src_parent_fid, entry) = match st.resolve_write_entry(&src).await {
         Ok(v) => v,
@@ -701,6 +754,22 @@ async fn move_or_copy(
     let Ok(driver) = st.get_driver(&acc_id).await else {
         return (StatusCode::BAD_REQUEST, "账号不可用").into_response();
     };
+
+    // Overwrite: T —— 先把已存在的目标删掉，否则驱动侧会以"目标已存在"失败
+    if dest_exists {
+        let existing = st.resolve_path(&dest).await.ok();
+        if let Some((_, existing_entry)) = existing {
+            let (_, dst_parent, _) = match st.resolve_write_entry(&dest).await {
+                Ok(v) => v,
+                Err(e) => return map_driver_error(&e),
+            };
+            if let Err(e) = driver.remove(&dst_parent, &existing_entry).await {
+                return map_driver_error(&e);
+            }
+            st.invalidate_index_prefix(&dest);
+            st.invalidate_dir_cache(&acc_id, &dst_parent);
+        }
+    }
 
     // 同目录改名直接 rename；否则搬进目标目录（驱动 copy/move 只认目录 fid，保留原名）
     let r = if src_parent_fid == dst_parent_fid {
@@ -806,7 +875,7 @@ async fn lock_resource(raw_path: &str, headers: &HeaderMap, body: Body) -> Respo
 
     if !has_body {
         // 刷新：从 If / Lock-Token 里找已发出的 token
-        let mut map = locks().lock().unwrap();
+        let mut map = locks().lock().unwrap_or_else(|e| e.into_inner());
         sweep_locks(&mut map);
         let if_hdr = headers
             .get("if")
@@ -838,7 +907,7 @@ async fn lock_resource(raw_path: &str, headers: &HeaderMap, body: Body) -> Respo
     } else {
         let token = format!("opaquelocktoken:{}", uuid::Uuid::new_v4());
         {
-            let mut map = locks().lock().unwrap();
+            let mut map = locks().lock().unwrap_or_else(|e| e.into_inner());
             sweep_locks(&mut map);
             // 同一路径重复 LOCK：丢掉旧锁让新 token 生效（不强制 If 校验，避免客户端忘了 UNLOCK 就写不动）
             map.retain(|_, l| l.path != path);
@@ -876,7 +945,7 @@ async fn unlock_resource(_raw_path: &str, headers: &HeaderMap) -> Response {
     if raw.is_empty() {
         return (StatusCode::BAD_REQUEST, "缺少 Lock-Token 头").into_response();
     }
-    let mut map = locks().lock().unwrap();
+    let mut map = locks().lock().unwrap_or_else(|e| e.into_inner());
     sweep_locks(&mut map);
     if map.remove(&raw).is_some() {
         StatusCode::NO_CONTENT.into_response()
@@ -962,6 +1031,9 @@ mod tests {
     fn xml_escape_covers_five_entities() {
         assert_eq!(xml_escape("a<b>&\"'"), "a&lt;b&gt;&amp;&quot;&apos;");
         assert_eq!(xml_escape("正常"), "正常");
+        // XML 1.0 非法控制字符必须剔除，否则整份 multistatus 无法解析
+        assert_eq!(xml_escape("a\u{0}b\u{1}c"), "abc");
+        assert_eq!(xml_escape("a\tb\nc"), "a\tb\nc");
     }
 
     #[test]
@@ -1125,7 +1197,7 @@ mod tests {
     fn locks_roundtrip_and_sweep() {
         let token = "opaquelocktoken:test-roundtrip";
         {
-            let mut m = locks().lock().unwrap();
+            let mut m = locks().lock().unwrap_or_else(|e| e.into_inner());
             m.insert(
                 token.to_string(),
                 LockEntry {
@@ -1136,7 +1208,7 @@ mod tests {
         }
         // 过期条目会被清理
         {
-            let mut m = locks().lock().unwrap();
+            let mut m = locks().lock().unwrap_or_else(|e| e.into_inner());
             m.insert(
                 "opaquelocktoken:expired".to_string(),
                 LockEntry {

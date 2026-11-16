@@ -163,6 +163,7 @@
             :src="preview._url"
             class="pdf-frame"
             title="PDF 预览"
+            sandbox
           ></iframe>
 
           <!-- 文本 / Markdown / 代码等 -->
@@ -742,7 +743,11 @@ const textError = ref('')
 const mdSource = ref(false)
 const mdHtml = computed(() => {
   if (!textContent.value) return ''
-  return DOMPurify.sanitize(md.parse(String(textContent.value)))
+  // 挂载盘上的 .md 内容不可信：禁掉能伪造面板 UI 或外带数据的标签
+  return DOMPurify.sanitize(md.parse(String(textContent.value)), {
+    FORBID_TAGS: ['style', 'form', 'input', 'textarea', 'button', 'select', 'option'],
+    FORBID_ATTR: ['style']
+  })
 })
 const textLineCount = computed(() => {
   const t = textContent.value

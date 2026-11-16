@@ -60,8 +60,8 @@ impl QuarkOpen {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -92,7 +92,7 @@ impl QuarkOpen {
     }
 
     async fn refresh_token(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if !self.use_online_api {
             return Err("未启用在线刷新且无本地 client 凭证".into());
         }
@@ -141,7 +141,7 @@ impl QuarkOpen {
         retried: bool,
     ) -> Result<Value, String> {
         let (tm, token, req_id) = self.generate_req_sign(method.as_str(), pathname);
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!("{API}{pathname}");
         let mut req = self
             .http
@@ -190,13 +190,13 @@ impl QuarkOpen {
     }
 
     pub async fn validate(&self) -> Result<(), String> {
-        if self.refresh_token.lock().unwrap().is_empty() {
+        if self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return Err("refresh_token 不能为空".into());
         }
         if self.app_id.is_empty() || self.sign_key.is_empty() {
             return Err("app_id 与 sign_key 不能为空".into());
         }
-        if self.access_token.lock().unwrap().is_empty() {
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.refresh_token().await?;
         }
         // 探测 list 根
@@ -306,7 +306,7 @@ impl QuarkOpen {
             return Err("目录无法下载".into());
         }
         let (tm, token, req_id) = self.generate_req_sign("GET", "/open/v1/file/download");
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!("{API}/open/v1/file/download");
         let resp = self
             .http

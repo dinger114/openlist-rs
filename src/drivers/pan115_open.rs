@@ -45,8 +45,8 @@ impl Pan115Open {
     }
 
     fn save_tokens(&self, access: &str, refresh: &str) {
-        *self.access_token.lock().unwrap() = access.to_string();
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
         let (a, r) = (access.to_string(), refresh.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -63,7 +63,7 @@ impl Pan115Open {
     }
 
     async fn refresh(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if rt.is_empty() {
             return Err("refresh_token 为空".into());
         }
@@ -110,7 +110,7 @@ impl Pan115Open {
         form: Option<&[(&str, String)]>,
         retried: bool,
     ) -> Result<Value, String> {
-        let token = self.access_token.lock().unwrap().clone();
+        let token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = self
             .http
             .request(method.clone(), url)
@@ -159,12 +159,12 @@ impl Pan115Open {
     }
 
     pub async fn validate(&self) -> Result<(), String> {
-        if self.access_token.lock().unwrap().is_empty()
-            && self.refresh_token.lock().unwrap().is_empty()
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+            && self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
         {
             return Err("access_token 与 refresh_token 不能同时为空".into());
         }
-        if self.access_token.lock().unwrap().is_empty() {
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.refresh().await?;
         }
         // 尝试用户信息；失败则尝试 list

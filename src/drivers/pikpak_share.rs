@@ -170,7 +170,7 @@ impl PikPakShare {
         let (timestamp, captcha_sign) = self.captcha_sign();
         let body = json!({
             "action": action,
-            "captcha_token": self.captcha_token.lock().unwrap().clone(),
+            "captcha_token": self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             "client_id": cfg.client_id,
             "device_id": self.device_id,
             "meta": {
@@ -212,7 +212,7 @@ impl PikPakShare {
         if token.is_empty() {
             return Err(format!("PikPakShare 无 captcha_token: {text}"));
         }
-        *self.captcha_token.lock().unwrap() = token;
+        *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = token;
         Ok(())
     }
 
@@ -225,7 +225,7 @@ impl PikPakShare {
             "share_id": self.share_id,
             "pass_code": self.share_pwd,
         });
-        let captcha = self.captcha_token.lock().unwrap().clone();
+        let captcha = self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let resp = self
             .http
             .post(format!("{DRIVE_API}/drive/v1/share/pass_code"))
@@ -255,13 +255,13 @@ impl PikPakShare {
             .and_then(|t| t.as_str())
             .unwrap_or("")
             .to_string();
-        *self.pass_code_token.lock().unwrap() = token;
+        *self.pass_code_token.lock().unwrap_or_else(|e| e.into_inner()) = token;
         Ok(())
     }
 
     async fn request(&self, method: &str, url: &str, body: Option<Value>) -> Result<Value, String> {
         let cfg = platform_cfg(&self.platform);
-        let captcha = self.captcha_token.lock().unwrap().clone();
+        let captcha = self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = match method {
             "POST" => self.http.post(url),
             _ => self.http.get(url),
@@ -319,7 +319,7 @@ impl PikPakShare {
         let mut page_token = String::new();
         let mut pass_retried = false;
         loop {
-            let pass = self.pass_code_token.lock().unwrap().clone();
+            let pass = self.pass_code_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let mut url = format!(
                 "{DRIVE_API}/drive/v1/share/detail?share_id={}&parent_id={}&limit=100&thumbnail_size=SIZE_LARGE&filters=%7B%22phase%22%3A%7B%22eq%22%3A%22PHASE_TYPE_COMPLETE%22%7D%2C%22trashed%22%3A%7B%22eq%22%3Afalse%7D%7D&pass_code_token={}",
                 urlencoding_encode(&self.share_id),
@@ -408,7 +408,7 @@ impl PikPakShare {
         if e.is_dir {
             return Err("目录无法下载".into());
         }
-        let pass = self.pass_code_token.lock().unwrap().clone();
+        let pass = self.pass_code_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!(
             "{DRIVE_API}/drive/v1/share/file_info?share_id={}&file_id={}&pass_code_token={}",
             urlencoding_encode(&self.share_id),

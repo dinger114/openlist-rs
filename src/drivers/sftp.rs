@@ -16,8 +16,8 @@ pub struct Sftp {
     passphrase: String,
     root_path: String,
     ignore_symlink_error: bool,
-    /// 配置中已钉扎的主机公钥指纹（空 = TOFU 首次连接）
-    host_key_fingerprint: String,
+    /// 已钉扎的主机公钥指纹（空 = TOFU 首次连接）；TOFU 成功后就地更新
+    host_key_fingerprint: std::sync::RwLock<String>,
     /// 首连观测到的指纹回写用；None = 无持久化通道（如单测/CLI）
     store: Option<Arc<Store>>,
     account_id: String,
@@ -56,7 +56,7 @@ impl russh::client::Handler for Handler {
             .public_key()
             .fingerprint(russh::keys::HashAlg::Sha256)
             .to_string();
-        *self.observed.lock().unwrap() = Some(fp.clone());
+        *self.observed.lock().unwrap_or_else(|e| e.into_inner()) = Some(fp.clone());
         Ok(Self::key_matches(self.expected.as_deref(), &fp))
     }
 }
@@ -102,7 +102,7 @@ impl Sftp {
             passphrase,
             root_path,
             ignore_symlink_error,
-            host_key_fingerprint: host_key_fingerprint.trim().to_string(),
+            host_key_fingerprint: std::sync::RwLock::new(host_key_fingerprint.trim().to_string()),
             store,
             account_id,
         }
@@ -125,19 +125,16 @@ impl Sftp {
         let config = russh::client::Config::default();
         let config = Arc::new(config);
         let observed = Arc::new(Mutex::new(None));
+        let pinned = self.host_key_fingerprint.read().unwrap().clone();
         let handler = Handler {
-            expected: if self.host_key_fingerprint.is_empty() {
-                None
-            } else {
-                Some(self.host_key_fingerprint.clone())
-            },
+            expected: if pinned.is_empty() { None } else { Some(pinned.clone()) },
             observed: observed.clone(),
         };
         let mut session = russh::client::connect(config, self.address.as_str(), handler)
             .await
             .map_err(|e| {
-                let seen = observed.lock().unwrap().clone();
-                match (self.host_key_fingerprint.is_empty(), seen) {
+                let seen = observed.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                match (pinned.is_empty(), seen) {
                     // 钉扎态下握手失败且已观测到指纹 → 明确告诉管理员是主机密钥变了
                     (false, Some(fp)) => format!(
                         "SSH 连接失败 {}: {e}（主机密钥不匹配，实际指纹 {fp}。\
@@ -150,17 +147,21 @@ impl Sftp {
 
         // TOFU：首次连接（配置里没有指纹）握手成功 → 把观测到的指纹写回配置。
         // 写库失败不阻断本次连接（否则首连永远失败），但会在日志里留下痕迹。
-        if self.host_key_fingerprint.is_empty() {
-            if let (Some(st), Some(fp)) = (&self.store, observed.lock().unwrap().clone()) {
-                let id = self.account_id.clone();
-                st.update_credential(&id, |cred| {
-                    if let crate::config::Credential::Sftp {
-                        host_key_fingerprint, ..
-                    } = cred
-                    {
-                        *host_key_fingerprint = fp;
-                    }
-                });
+        if pinned.is_empty() {
+            if let Some(fp) = observed.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+                // 先就地钉扎：否则本实例后续每次重连都是 expected=None（盲信任）
+                *self.host_key_fingerprint.write().unwrap() = fp.clone();
+                if let Some(st) = &self.store {
+                    let id = self.account_id.clone();
+                    st.update_credential(&id, |cred| {
+                        if let crate::config::Credential::Sftp {
+                            host_key_fingerprint, ..
+                        } = cred
+                        {
+                            *host_key_fingerprint = fp;
+                        }
+                    });
+                }
             }
         }
 
@@ -341,6 +342,7 @@ impl Sftp {
     }
 
     pub async fn rename(&self, _parent_fid: &str, e: &Entry, new_name: &str) -> Result<(), String> {
+        super::validate_name(new_name)?;
         let src = self.resolve(&e.fid);
         let parent = src.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         let dst = if parent.is_empty() {
@@ -434,6 +436,7 @@ impl Sftp {
     }
 
     pub async fn put(&self, dst_dir_fid: &str, mut input: PutInput) -> Result<(), String> {
+        super::validate_name(&input.name)?;
         let path = join_path(&self.resolve(dst_dir_fid), &input.name);
         self.with_sftp(move |sftp| {
             Box::pin(async move {

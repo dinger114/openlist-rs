@@ -372,7 +372,14 @@ function onSettingsSaved() {
 
 async function fetchAccountSecret(id) {
   // POST：凭据明细不进浏览器缓存 / 反代日志（后端也带 Cache-Control: no-store）
-  return api(`/api/accounts/${id}/secret`, { method: 'POST' })
+  // 导出网盘凭据与读取 API 令牌同级，需要再确认一次当前密码
+  const oldPassword = window.prompt('请输入当前密码以查看凭据')
+  if (!oldPassword) throw new Error('已取消')
+  return api(`/api/accounts/${id}/secret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ old_password: oldPassword })
+  })
 }
 
 async function loadAccounts() {
@@ -994,14 +1001,26 @@ async function resolveUrl(e, forceProxy = false) {
   return b.url
 }
 
+// URL 可能来自上游网盘（驱动返回的 raw_url），只放行 http(s)
+function safeUrl(raw) {
+  try {
+    const u = new URL(raw, window.location.origin)
+    return /^https?:$/.test(u.protocol) ? u.href : ''
+  } catch (_) {
+    return ''
+  }
+}
+
 function download(e) {
   // 上游 CDN（ipfs-gateway.qzy.xyz）有防盗链：请求带外部 Referer/Origin 一律 403，
   // 而 window.open 必然带上面板的地址 → 浏览器里下载下来是空白文件（命令行不带 Referer 所以测不出来）。
   // 用 <a rel="noreferrer" referrerpolicy="no-referrer"> 打开即可，浏览器不再发送 Referer，直链照旧可下。
   resolveUrl(e)
     .then((url) => {
+      const href = safeUrl(url)
+      if (!href) throw new Error('下载地址不合法')
       const a = document.createElement('a')
-      a.href = url
+      a.href = href
       a.target = '_blank'
       a.rel = 'noreferrer'
       a.referrerPolicy = 'no-referrer'

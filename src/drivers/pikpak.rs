@@ -59,12 +59,12 @@ impl PikPak {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let id = self.account_id.clone();
         let r = refresh.to_string();
         let a = access.to_string();
-        let d = self.device_id.lock().unwrap().clone();
+        let d = self.device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.store.update_credential(&id, |c| {
             if let Credential::PikPak {
                 refresh_token,
@@ -123,7 +123,7 @@ impl PikPak {
     }
 
     async fn refresh(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if rt.is_empty() {
             return self.login().await;
         }
@@ -159,17 +159,17 @@ impl PikPak {
     }
 
     async fn ensure_token(&self) -> Result<String, String> {
-        let at = self.access_token.lock().unwrap().clone();
+        let at = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if at.is_empty() {
             self.refresh().await?;
-            return Ok(self.access_token.lock().unwrap().clone());
+            return Ok(self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone());
         }
         Ok(at)
     }
 
     async fn request(&self, method: &str, url: &str, body: Option<Value>) -> Result<Value, String> {
         let mut token = self.ensure_token().await?;
-        let device = self.device_id.lock().unwrap().clone();
+        let device = self.device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         for attempt in 0..2 {
             let mut req = match method {
                 "GET" => self.http.get(url),
@@ -198,7 +198,7 @@ impl PikPak {
             let err_code = v.get("error_code").and_then(|c| c.as_i64()).unwrap_or(0);
             if (status == 401 || err_code == 16) && attempt == 0 {
                 self.refresh().await?;
-                token = self.access_token.lock().unwrap().clone();
+                token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 continue;
             }
             if err_code != 0 {
@@ -630,6 +630,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

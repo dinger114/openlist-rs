@@ -154,15 +154,15 @@ impl OnedriveApp {
             .get("access_token")
             .and_then(|t| t.as_str())
             .ok_or_else(|| format!("OnedriveAPP 无 access_token: {text}"))?;
-        *self.access_token.lock().unwrap() = at.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = at.to_string();
         Ok(())
     }
 
     async fn ensure_token(&self) -> Result<String, String> {
-        let t = self.access_token.lock().unwrap().clone();
+        let t = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if t.is_empty() {
             self.access_token().await?;
-            return Ok(self.access_token.lock().unwrap().clone());
+            return Ok(self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone());
         }
         Ok(t)
     }
@@ -190,13 +190,13 @@ impl OnedriveApp {
             let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
             if status == 401 && attempt == 0 {
                 self.access_token().await?;
-                token = self.access_token.lock().unwrap().clone();
+                token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 continue;
             }
             if let Some(code) = v.pointer("/error/code").and_then(|c| c.as_str()) {
                 if code == "InvalidAuthenticationToken" && attempt == 0 {
                     self.access_token().await?;
-                    token = self.access_token.lock().unwrap().clone();
+                    token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     continue;
                 }
                 let msg = v
@@ -470,6 +470,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

@@ -143,18 +143,18 @@ impl OfflineManager {
     }
 
     pub(crate) fn insert(&self, t: OfflineTask) {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         tasks.insert(t.id.clone(), t);
         prune(&mut tasks);
     }
 
     pub(crate) fn get(&self, id: &str) -> Option<OfflineTask> {
-        self.tasks.lock().unwrap().get(id).cloned()
+        self.tasks.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned()
     }
 
     /// 全部任务：进行中在前，同组按创建时间倒序
     pub(crate) fn list(&self) -> Vec<OfflineTask> {
-        let mut v: Vec<OfflineTask> = self.tasks.lock().unwrap().values().cloned().collect();
+        let mut v: Vec<OfflineTask> = self.tasks.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
         v.sort_by(|a, b| {
             (a.state != TaskState::Running)
                 .cmp(&(b.state != TaskState::Running))
@@ -171,7 +171,7 @@ impl OfflineManager {
     }
 
     pub(crate) fn remove(&self, id: &str) -> Option<OfflineTask> {
-        self.tasks.lock().unwrap().remove(id)
+        self.tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(id)
     }
 
     /// 轮询回写：找到同 gid 的任务就刷新状态，返回「本次刚转终态」的那条
@@ -180,7 +180,7 @@ impl OfflineManager {
         gid: &str,
         s: &crate::drivers::halalcloud_open::OfflineTaskStatus,
     ) -> Option<OfflineTask> {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let t = tasks
             .values_mut()
             .find(|t| !t.gid.is_empty() && t.gid == gid)?;
@@ -194,7 +194,7 @@ impl OfflineManager {
 
     /// 某账号的进行中任务全部判失败（账号不可用/被删时）
     pub(crate) fn fail_account_tasks(&self, account: &str, reason: &str) {
-        let mut tasks = self.tasks.lock().unwrap();
+        let mut tasks = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         for t in tasks.values_mut() {
             if t.account_id == account && t.state == TaskState::Running {
                 t.state = TaskState::Failed;
@@ -268,6 +268,11 @@ pub(crate) fn spawn_poller(st: AppState) {
             tick.tick().await;
             let now = Instant::now();
             for acc in st.offline.accounts_to_poll(now) {
+                // 禁用的存储不轮询，也不把手上的任务判死（恢复启用后还能接上）
+                if st.account_enabled(&acc) == Some(false) {
+                    st.offline.set_provider_list_at(&acc, now, Vec::new());
+                    continue;
+                }
                 let driver = match st.get_driver(&acc).await {
                     Ok(d) => d,
                     Err(e) => {

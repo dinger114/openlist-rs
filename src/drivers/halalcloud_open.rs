@@ -251,7 +251,7 @@ impl HalalcloudOpen {
                 .map_err(|e| ApiErr::new(format!("halalcloud 请求体序列化失败: {e}")))?,
             None => Vec::new(),
         };
-        let token = self.access_token.lock().unwrap().clone();
+        let token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let (timestamp, date) = utc_now_rfc3339();
         let nonce = base36(
             SystemTime::now()
@@ -319,7 +319,7 @@ impl HalalcloudOpen {
 
     /// 刷新 access_token（对齐 SDK client.go:205-234）并落盘
     async fn refresh_access_token(&self) -> Result<(), String> {
-        let refresh_token = self.refresh_token.lock().unwrap().clone();
+        let refresh_token = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if refresh_token.is_empty() {
             return Err(
                 "halalcloud access_token 已失效且未配置 refresh_token，请重新填写凭据".into(),
@@ -357,8 +357,8 @@ impl HalalcloudOpen {
         } else {
             new_refresh
         };
-        *self.access_token.lock().unwrap() = access_token.clone();
-        *self.refresh_token.lock().unwrap() = refresh_token.clone();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access_token.clone();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh_token.clone();
         self.store.update_credential(&self.account_id, |c| {
             if let Credential::HalalcloudOpen {
                 access_token: at,
@@ -388,7 +388,12 @@ impl HalalcloudOpen {
         let parent = self.resolve(parent_fid);
         let mut token = String::new();
         let mut out: Vec<Entry> = Vec::new();
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let body = json!({
                 "parent": { "path": parent },
                 "list_info": { "limit": LIST_LIMIT, "token": token },

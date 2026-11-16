@@ -194,7 +194,7 @@ mod tests {
             server_proxy: false,
             enabled: true,
         };
-        st.store.data.lock().unwrap().accounts.push(acc);
+        st.store.data.lock().unwrap_or_else(|e| e.into_inner()).accounts.push(acc);
         st
     }
 
