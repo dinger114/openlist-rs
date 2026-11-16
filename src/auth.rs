@@ -345,27 +345,39 @@ pub(crate) async fn confirm_password(
     st: &AppState,
     ip: std::net::IpAddr,
     req: &ReauthReq,
-) -> Result<(), Response> {
+) -> Result<(), Box<Response>> {
     let now = Instant::now();
-    if let Err(wait) = st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).check(ip, now) {
-        return Err(rate_limited(wait));
+    if let Err(wait) = st
+        .login_limiter
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .check(ip, now)
+    {
+        return Err(Box::new(rate_limited(wait)));
     }
     let old = req.old_password.as_deref().unwrap_or("");
     if old.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "需要提供当前密码" })),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "需要提供当前密码" })),
+            )
+                .into_response(),
+        ));
     }
     let user = st.auth.read().unwrap().user.clone();
     if !verify_credentials(st, &user, old).await {
-        st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_failure(ip, now);
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "当前密码不正确" })),
-        )
-            .into_response());
+        st.login_limiter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record_failure(ip, now);
+        return Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "当前密码不正确" })),
+            )
+                .into_response(),
+        ));
     }
     st.login_limiter.lock().unwrap_or_else(|e| e.into_inner()).record_success(ip);
     Ok(())
@@ -378,7 +390,7 @@ pub(crate) async fn get_api_token(
     Json(req): Json<ReauthReq>,
 ) -> Response {
     if let Err(resp) = confirm_password(&st, peer.ip(), &req).await {
-        return resp;
+        return *resp;
     }
     let mut resp = Json(json!({ "token": st.api_token() })).into_response();
     resp.headers_mut()
@@ -396,7 +408,7 @@ pub(crate) async fn reset_api_token(
     Json(req): Json<ReauthReq>,
 ) -> Response {
     if let Err(resp) = confirm_password(&st, peer.ip(), &req).await {
-        return resp;
+        return *resp;
     }
     match st.reset_api_token() {
         Ok(token) => Json(json!({ "token": token })).into_response(),

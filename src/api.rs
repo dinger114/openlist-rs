@@ -1538,7 +1538,7 @@ pub(crate) async fn get_account_secret(
 ) -> Response {
     // 与读取 API 令牌同级：这里能吐出全部网盘 Cookie / refresh_token
     if let Err(resp) = crate::auth::confirm_password(&st, peer.ip(), &req).await {
-        return resp;
+        return *resp;
     }
     let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
     let Some(acc) = data.accounts.iter().find(|a| a.id == id) else {
