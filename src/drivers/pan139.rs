@@ -236,9 +236,9 @@ impl Yun139 {
     }
 
     fn save_authorization(&self, auth: &str) {
-        *self.authorization.lock().unwrap() = auth.to_string();
+        *self.authorization.lock().unwrap_or_else(|e| e.into_inner()) = auth.to_string();
         if let Ok(parts) = Self::decode_authorization(auth) {
-            *self.account.lock().unwrap() = parts.account;
+            *self.account.lock().unwrap_or_else(|e| e.into_inner()) = parts.account;
         }
         let auth = auth.to_string();
         let id = self.account_id.clone();
@@ -252,7 +252,7 @@ impl Yun139 {
     /// 对齐 Go refreshToken()：临期自动刷新 token
     async fn refresh_token(&self) -> Result<(), String> {
         let parts = {
-            let auth = self.authorization.lock().unwrap();
+            let auth = self.authorization.lock().unwrap_or_else(|e| e.into_inner());
             Self::decode_authorization(&auth)?
         };
         let remaining = parts.expire_ms - now_ms();
@@ -315,7 +315,7 @@ impl Yun139 {
         let ts = format!("{y:04}-{m:02}-{d:02} {hh:02}:{mm:02}:{ss:02}");
         let rand_str = rand_string(16);
         let sign = cal_sign(&body, &ts, &rand_str);
-        let auth = self.authorization.lock().unwrap().clone();
+        let auth = self.authorization.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!("{base}{pathname}");
 
         let mut req = self
@@ -397,7 +397,7 @@ impl Yun139 {
 
     /// 对齐 Go requestRoute()：查询路由策略，取新版个人云 host
     async fn refresh_route_policy(&self) -> Result<(), String> {
-        let account = self.account.lock().unwrap().clone();
+        let account = self.account.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let data = json!({
             "userInfo": {
                 "userType": 1,
@@ -433,7 +433,7 @@ impl Yun139 {
         if host.is_empty() {
             return Err("139 PersonalCloudHost 为空".into());
         }
-        *self.personal_host.lock().unwrap() = host;
+        *self.personal_host.lock().unwrap_or_else(|e| e.into_inner()) = host;
         Ok(())
     }
 
@@ -458,17 +458,22 @@ impl Yun139 {
 
     fn common_account(&self) -> Value {
         json!({
-            "account": self.account.lock().unwrap().clone(),
+            "account": self.account.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             "accountType": 1,
         })
     }
 
     /// 对齐 Go personalGetFiles()：新版个人云目录列表（cursor 分页）
     async fn personal_list(&self, fid: &str) -> Result<Vec<Entry>, String> {
-        let host = self.personal_host.lock().unwrap().clone();
+        let host = self.personal_host.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut files = Vec::new();
         let mut cursor = String::new();
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let data = json!({
                 "imageThumbnailStyleList": ["Small", "Large"],
                 "orderBy": "updated_at",
@@ -619,7 +624,7 @@ impl Yun139 {
 
     /// 对齐 Go personalGetLink()：新版个人云直链
     async fn personal_link(&self, fid: &str) -> Result<String, String> {
-        let host = self.personal_host.lock().unwrap().clone();
+        let host = self.personal_host.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let v = self
             .api_request(
                 "new",
@@ -698,7 +703,7 @@ impl Yun139 {
 
     /// 新版个人云 host（validate 时已初始化）
     fn get_personal_host(&self) -> Result<String, String> {
-        let host = self.personal_host.lock().unwrap().clone();
+        let host = self.personal_host.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if host.is_empty() {
             return Err("139 personal host 未初始化（请重新验证账号）".into());
         }

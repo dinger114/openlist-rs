@@ -50,8 +50,8 @@ impl AliyundriveShare {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -69,7 +69,7 @@ impl AliyundriveShare {
 
     async fn refresh_access_token(&self) -> Result<(), String> {
         let body = json!({
-            "refresh_token": self.refresh_token.lock().unwrap().clone(),
+            "refresh_token": self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             "grant_type": "refresh_token",
         });
         let resp = self
@@ -142,7 +142,7 @@ impl AliyundriveShare {
         if st.is_empty() {
             return Err("share_token 为空".into());
         }
-        *self.share_token.lock().unwrap() = st;
+        *self.share_token.lock().unwrap_or_else(|e| e.into_inner()) = st;
         Ok(())
     }
 
@@ -153,8 +153,8 @@ impl AliyundriveShare {
         body: Option<Value>,
         retried: bool,
     ) -> Result<Value, String> {
-        let access = self.access_token.lock().unwrap().clone();
-        let share_tok = self.share_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let share_tok = self.share_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = self
             .http
             .request(method.clone(), url)
@@ -195,7 +195,7 @@ impl AliyundriveShare {
         if self.share_id.is_empty() {
             return Err("share_id 不能为空".into());
         }
-        if self.refresh_token.lock().unwrap().is_empty() {
+        if self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return Err("refresh_token 不能为空".into());
         }
         self.refresh_access_token().await?;
@@ -231,9 +231,9 @@ impl AliyundriveShare {
                 .cloned()
                 .unwrap_or_default();
             for f in &items {
-                if self.drive_id.lock().unwrap().is_empty() {
+                if self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
                     if let Some(did) = f.get("drive_id").and_then(|x| x.as_str()) {
-                        *self.drive_id.lock().unwrap() = did.to_string();
+                        *self.drive_id.lock().unwrap_or_else(|e| e.into_inner()) = did.to_string();
                     }
                 }
                 let updated_at = f

@@ -56,7 +56,7 @@ impl Pan123Share {
     async fn rate_limit(&self) {
         loop {
             let wait = {
-                let mut last = self.last_req.lock().unwrap();
+                let mut last = self.last_req.lock().unwrap_or_else(|e| e.into_inner());
                 match *last {
                     Some(t) if t.elapsed() < RATE_LIMIT => RATE_LIMIT - t.elapsed(),
                     _ => {

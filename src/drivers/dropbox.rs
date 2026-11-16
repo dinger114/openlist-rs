@@ -59,8 +59,8 @@ impl Dropbox {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let id = self.account_id.clone();
         let r = refresh.to_string();
         let a = access.to_string();
@@ -78,7 +78,7 @@ impl Dropbox {
     }
 
     async fn refresh(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if rt.is_empty() {
             return Err("Dropbox 需要 refresh_token".into());
         }
@@ -141,10 +141,10 @@ impl Dropbox {
     }
 
     async fn ensure_token(&self) -> Result<String, String> {
-        let at = self.access_token.lock().unwrap().clone();
+        let at = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if at.is_empty() {
             self.refresh().await?;
-            return Ok(self.access_token.lock().unwrap().clone());
+            return Ok(self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone());
         }
         Ok(at)
     }
@@ -157,7 +157,7 @@ impl Dropbox {
                 .post(format!("{API}{path}"))
                 .header("Authorization", format!("Bearer {token}"))
                 .header("Content-Type", "application/json");
-            let ns = self.root_namespace_id.lock().unwrap().clone();
+            let ns = self.root_namespace_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
             if !ns.is_empty() {
                 req = req.header(
                     "Dropbox-API-Path-Root",
@@ -173,7 +173,7 @@ impl Dropbox {
             let text = resp.text().await.unwrap_or_default();
             if status == 401 && attempt == 0 {
                 self.refresh().await?;
-                token = self.access_token.lock().unwrap().clone();
+                token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 continue;
             }
             if !(200..300).contains(&status) {
@@ -202,7 +202,7 @@ impl Dropbox {
             .pointer("/root_info/root_namespace_id")
             .and_then(|x| x.as_str())
         {
-            *self.root_namespace_id.lock().unwrap() = ns.to_string();
+            *self.root_namespace_id.lock().unwrap_or_else(|e| e.into_inner()) = ns.to_string();
         }
         Ok(())
     }
@@ -400,7 +400,7 @@ impl Dropbox {
         const PART: usize = 20 * 1024 * 1024; // 20MB，对齐 Go 版
         let token = self.ensure_token().await?;
         let content = "https://content.dropboxapi.com";
-        let ns = self.root_namespace_id.lock().unwrap().clone();
+        let ns = self.root_namespace_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
         // start session
         let mut start_req = self
@@ -522,6 +522,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

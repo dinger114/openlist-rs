@@ -97,8 +97,8 @@ impl BaiduNetdisk {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -114,13 +114,13 @@ impl BaiduNetdisk {
     }
 
     fn access_token(&self) -> String {
-        self.access_token.lock().unwrap().clone()
+        self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 对齐 Go 版 refreshToken()：olist 在线 API 刷新（重试一次防空 token）
     async fn refresh_token(&self) -> Result<(), String> {
         for _ in 0..2 {
-            let cur = self.refresh_token.lock().unwrap().clone();
+            let cur = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let url = format!(
                 "{}?refresh_ui={}&server_use=true&driver_txt=baiduyun_go",
                 ONLINE_REFRESH_API,

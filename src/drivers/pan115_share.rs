@@ -34,7 +34,7 @@ impl Pan115Share {
     }
 
     fn cookie(&self) -> String {
-        self.cookie.lock().unwrap().clone()
+        self.cookie.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     async fn request(

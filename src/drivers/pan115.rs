@@ -302,11 +302,11 @@ impl Pan115 {
     }
 
     fn cookie(&self) -> String {
-        self.cookie.lock().unwrap().clone()
+        self.cookie.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     fn ua(&self) -> String {
-        self.ua.lock().unwrap().clone()
+        self.ua.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 对齐 OpenList initAppVer：拉取官方 web 版本号拼 UA
@@ -322,7 +322,7 @@ impl Pan115 {
         })
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| FALLBACK_APP_VER.to_string());
-        *self.ua.lock().unwrap() = format!("Mozilla/5.0 115Browser/{ver}");
+        *self.ua.lock().unwrap_or_else(|e| e.into_inner()) = format!("Mozilla/5.0 115Browser/{ver}");
     }
 
     /// 统一请求入口：带 cookie + 115Browser UA
@@ -1349,7 +1349,7 @@ fn truncate_for_log(s: &str) -> String {
     if s.len() <= 200 {
         s.to_string()
     } else {
-        format!("{}...", &s[..200])
+        format!("{}...", super::truncate_bytes(s, 200))
     }
 }
 
@@ -1453,7 +1453,7 @@ impl Pan115 {
 
     /// 对齐 UploadAvailable -> GetUploadInfo：拉取/缓存上传元信息
     async fn ensure_upload_meta(&self) -> Result<UploadMeta, String> {
-        if let Some(m) = self.upload_meta.lock().unwrap().clone() {
+        if let Some(m) = self.upload_meta.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Ok(m);
         }
         let v = self
@@ -1481,7 +1481,7 @@ impl Pan115 {
             userkey,
             size_limit,
         };
-        *self.upload_meta.lock().unwrap() = Some(meta.clone());
+        *self.upload_meta.lock().unwrap_or_else(|e| e.into_inner()) = Some(meta.clone());
         Ok(meta)
     }
 

@@ -461,6 +461,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

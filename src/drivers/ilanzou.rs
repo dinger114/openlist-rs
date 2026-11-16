@@ -104,7 +104,7 @@ impl Ilanzou {
 
     fn save_token(&self, token: &str) {
         // 对齐 Go 版：appToken 仅保存在运行期，不落盘
-        *self.token.lock().unwrap() = token.to_string();
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = token.to_string();
     }
 
     async fn login(&self) -> Result<(), String> {
@@ -134,7 +134,7 @@ impl Ilanzou {
     }
 
     pub async fn validate(&self) -> Result<(), String> {
-        if self.uuid.lock().unwrap().is_empty() {
+        if self.uuid.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             let v = self
                 .unproved("/getUuid", reqwest::Method::GET, None, None)
                 .await?;
@@ -146,7 +146,7 @@ impl Ilanzou {
             if uuid.is_empty() {
                 return Err("蓝奏云未返回设备 uuid".into());
             }
-            *self.uuid.lock().unwrap() = uuid;
+            *self.uuid.lock().unwrap_or_else(|e| e.into_inner()) = uuid;
         }
         let v = self
             .proved("/user/account/map", reqwest::Method::GET, None, None)
@@ -162,8 +162,8 @@ impl Ilanzou {
         if user_id.is_empty() {
             return Err("蓝奏云登录态校验失败（账号密码错误或未登录）".into());
         }
-        *self.user_id.lock().unwrap() = user_id;
-        *self.account.lock().unwrap() = account;
+        *self.user_id.lock().unwrap_or_else(|e| e.into_inner()) = user_id;
+        *self.account.lock().unwrap_or_else(|e| e.into_inner()) = account;
         Ok(())
     }
 
@@ -201,7 +201,7 @@ impl Ilanzou {
         body: Option<Value>,
         is_retry: bool,
     ) -> Result<Value, String> {
-        let uuid = self.uuid.lock().unwrap().clone();
+        let uuid = self.uuid.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let (_, ts) = self.get_timestamp();
         let mut params = vec![
             format!("uuid={}", urlencode(&uuid)),
@@ -213,7 +213,7 @@ impl Ilanzou {
             format!("timestamp={ts}"),
         ];
         if proved {
-            let token = self.token.lock().unwrap().clone();
+            let token = self.token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             params.push(format!("appToken={}", app_token_query_value(&token)));
         }
         params.push("extra=2".to_string());
@@ -247,7 +247,7 @@ impl Ilanzou {
             // 登录态失效：重登重试一次
             if !is_retry
                 && proved
-                && (code == -1 || code == -2 || self.token.lock().unwrap().is_empty())
+                && (code == -1 || code == -2 || self.token.lock().unwrap_or_else(|e| e.into_inner()).is_empty())
             {
                 self.login().await?;
                 // Box::pin 打断异步递归（重登后重试一次）
@@ -403,8 +403,8 @@ impl Ilanzou {
         if e.is_dir {
             return Err("目录无法下载".into());
         }
-        let uuid = self.uuid.lock().unwrap().clone();
-        let user_id = self.user_id.lock().unwrap().clone();
+        let uuid = self.uuid.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let user_id = self.user_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if user_id.is_empty() {
             return Err("蓝奏云尚未初始化完成".into());
         }
@@ -422,7 +422,7 @@ impl Ilanzou {
             urlencode(&uuid),
             urlencode(self.conf.dev_version),
             urlencode(&ts_enc),
-            urlencode(&self.token.lock().unwrap()),
+            urlencode(&self.token.lock().unwrap_or_else(|e| e.into_inner())),
             urlencode(&download_id),
             urlencode(&auth),
         );
@@ -599,7 +599,7 @@ impl Ilanzou {
         h.update(&buf);
         let etag = hex::encode(h.finalize());
         let file_size_kib = ((buf.len() as i64) + 1023) / 1024;
-        let account = self.account.lock().unwrap().clone();
+        let account = self.account.lock().unwrap_or_else(|e| e.into_inner()).clone();
         // 1. getUpToken
         let v = self
             .proved(

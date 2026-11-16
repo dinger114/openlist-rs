@@ -68,9 +68,9 @@ impl CloudreveV4 {
     }
 
     fn save_tokens(&self, access: &str, refresh: &str, expires: i64) {
-        *self.access_token.lock().unwrap() = access.to_string();
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_expires.lock().unwrap() = expires;
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_expires.lock().unwrap_or_else(|e| e.into_inner()) = expires;
         let (a, r) = (access.to_string(), refresh.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -108,8 +108,8 @@ impl CloudreveV4 {
 
     /// 对齐 Go 版 isTokenExpired
     fn is_token_expired(&self) -> bool {
-        let access = self.access_token.lock().unwrap().clone();
-        let refresh = self.refresh_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let refresh = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if refresh.is_empty() {
             // 无 refresh token：有账号密码则重登，否则用现有 access token 直到最后
             return self.can_login();
@@ -117,7 +117,7 @@ impl CloudreveV4 {
         if access.is_empty() {
             return true;
         }
-        let expires = *self.access_expires.lock().unwrap();
+        let expires = *self.access_expires.lock().unwrap_or_else(|e| e.into_inner());
         if expires > 0 {
             return Self::now_secs() >= expires - 60;
         }
@@ -136,7 +136,7 @@ impl CloudreveV4 {
         query: Option<Vec<(String, String)>>,
     ) -> Result<Value, String> {
         let url = format!("{}/api/v4{path}", self.address);
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = self
             .http
             .request(method, &url)
@@ -281,7 +281,7 @@ impl CloudreveV4 {
     }
 
     async fn refresh_token(&self) -> Result<(), String> {
-        let refresh = self.refresh_token.lock().unwrap().clone();
+        let refresh = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if refresh.is_empty() {
             if self.can_login() {
                 return self.login().await;
@@ -335,10 +335,10 @@ impl CloudreveV4 {
         if self.can_login() {
             return self.login().await;
         }
-        if !self.refresh_token.lock().unwrap().is_empty() {
+        if !self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return self.refresh_token().await;
         }
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if access.is_empty() {
             return Err("Cloudreve V4 至少需要 AccessToken / RefreshToken / 账号密码之一".into());
         }
@@ -715,7 +715,7 @@ impl CloudreveV4 {
     /// 分片上传：POST /file/upload/{session}/{chunk}，octet-stream 原始字节
     async fn upload_chunk(&self, session_id: &str, chunk: u32, data: &[u8]) -> Result<(), String> {
         let url = format!("{}/api/v4/file/upload/{session_id}/{chunk}", self.address);
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut last_err = String::new();
         for _ in 0..3 {
             let resp = self
@@ -752,7 +752,7 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }
 

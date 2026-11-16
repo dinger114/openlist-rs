@@ -2,6 +2,11 @@
 name = "openlist-rs"
 version = "0.1.0"
 edition = "2021"
+description = "OpenList 的 Rust 实现：单一二进制挂载多个网盘，自带面板、AList 协议与 WebDAV"
+license = "MIT"
+repository = "https://github.com/dinger114/openlist-rs"
+readme = "README.md"
+rust-version = "1.88"
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
@@ -13,8 +18,6 @@ futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "cookies", "gzip", "deflate", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tower = "0.5"
-tower-http = { version = "0.7", features = ["fs"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.23"
 url = "2"

@@ -126,7 +126,7 @@ impl Pan123 {
     }
 
     fn save_token(&self, token: &str) {
-        *self.access_token.lock().unwrap() = token.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = token.to_string();
         let token = token.to_string();
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -208,7 +208,7 @@ impl Pan123 {
             .header("referer", "https://yun.123pan.com/")
             .header(
                 "authorization",
-                format!("Bearer {}", self.access_token.lock().unwrap()),
+                format!("Bearer {}", self.access_token.lock().unwrap_or_else(|e| e.into_inner())),
             )
             .header(
                 "user-agent",
@@ -241,7 +241,7 @@ impl Pan123 {
 
     /// 对齐 Go 版 Init(): GET /user/info 验证 token
     pub async fn validate(&self) -> Result<(), String> {
-        if self.access_token.lock().unwrap().is_empty() {
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.login().await?;
         }
         self.request(Method::GET, USER_INFO, None, None, false)

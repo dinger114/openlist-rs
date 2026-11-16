@@ -47,6 +47,21 @@ pub struct Onedrive {
 }
 
 /// region -> (oauth host, graph api host)，对齐 Go 版 onedriveHostMap
+/// 列表分页硬上限：防恶意/异常上游无限翻页
+const MAX_LIST_PAGES: usize = 200;
+
+/// URL 的 (scheme, host, port)，用于校验 nextLink 没有跳到别的站点
+fn origin_of(url: &str) -> Result<String, String> {
+    let u = url::Url::parse(url).map_err(|e| format!("URL 无效: {e}"))?;
+    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+    Ok(format!(
+        "{}://{}:{}",
+        u.scheme(),
+        host,
+        u.port_or_known_default().unwrap_or(0)
+    ))
+}
+
 fn host_of(region: &str) -> (&'static str, &'static str) {
     match region {
         "cn" => (
@@ -95,8 +110,8 @@ impl Onedrive {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -113,12 +128,12 @@ impl Onedrive {
     }
 
     fn access_token(&self) -> String {
-        self.access_token.lock().unwrap().clone()
+        self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// 对齐 Go 版 refreshToken()：olist 在线 API 刷新
     async fn refresh_token(&self) -> Result<(), String> {
-        let cur = self.refresh_token.lock().unwrap().clone();
+        let cur = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!(
             "{}?refresh_ui={}&server_use=true&driver_txt=onedrive_pr",
             ONLINE_REFRESH_API,
@@ -176,7 +191,7 @@ impl Onedrive {
     async fn request(&self, method: Method, url: &str, retried: bool) -> Result<Value, String> {
         let resp = self
             .http
-            .request(method, url)
+            .request(method.clone(), url)
             .header("Authorization", format!("Bearer {}", self.access_token()))
             .send()
             .await
@@ -194,7 +209,7 @@ impl Onedrive {
         if !code.is_empty() {
             if code == TOKEN_EXPIRED_CODE && !retried {
                 self.refresh_token().await?;
-                return Box::pin(self.request(Method::GET, url, true)).await;
+                return Box::pin(self.request(method, url, true)).await;
             }
             let msg = v
                 .pointer("/error/message")
@@ -237,8 +252,15 @@ impl Onedrive {
         };
         let mut files = Vec::new();
         // 首个 URL 由路径构造，后续直接使用服务端返回的 nextLink（绝对地址）
-        let mut next_link = format!("{}{CHILDREN_QUERY}", self.meta_url(&dir));
+        let first_url = format!("{}{CHILDREN_QUERY}", self.meta_url(&dir));
+        let origin = origin_of(&first_url)?;
+        let mut next_link = first_url;
+        let mut pages = 0usize;
         loop {
+            if pages >= MAX_LIST_PAGES {
+                return Err(format!("OneDrive 列表分页超过 {MAX_LIST_PAGES} 页，已中止"));
+            }
+            pages += 1;
             let resp = self.request(Method::GET, &next_link, false).await?;
             let items = resp
                 .get("value")
@@ -275,6 +297,10 @@ impl Onedrive {
                 .to_string();
             if next_link.is_empty() {
                 break;
+            }
+            // nextLink 会把 Bearer 一起带过去，异源一律拒绝（AUDIT.md P2-14）
+            if origin_of(&next_link)? != origin {
+                return Err("OneDrive 返回的 nextLink 指向其他站点，已拒绝".into());
             }
         }
         Ok(files)

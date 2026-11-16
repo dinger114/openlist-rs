@@ -1,4 +1,5 @@
 use crate::config::{Account, Credential, Entry};
+use axum::extract::ConnectInfo;
 use crate::drivers::Driver;
 use crate::state::AppState;
 use axum::{
@@ -11,6 +12,7 @@ use axum::{
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use url::Url;
 
 /// 从 query string 中读取 JSON 字符串并反序列化为 Value。
 /// axum Query 提取器把 URL 参数当纯字符串，所以需要手动 parse。
@@ -96,7 +98,25 @@ fn validate_account_name(raw: &str) -> Result<Option<String>, String> {
     if name.chars().any(|c| c.is_control()) {
         return Err("账号名称不能包含控制字符".into());
     }
+    // 零宽/双向覆盖字符会让名称在面板里显示成另一个样子
+    if name.chars().any(is_invisible_format) {
+        return Err("账号名称不能包含零宽或双向控制字符".into());
+    }
+    if name.chars().count() > MAX_ACCOUNT_NAME_CHARS {
+        return Err(format!(
+            "账号名称最长 {MAX_ACCOUNT_NAME_CHARS} 个字符"
+        ));
+    }
     Ok(Some(name.to_string()))
+}
+
+/// 账号名长度上限（会进虚拟路径、索引 key 与每次落盘序列化）
+const MAX_ACCOUNT_NAME_CHARS: usize = 64;
+
+fn is_invisible_format(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+        | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
 }
 
 /// 名称是否已被其他账号占用（`except_id` 用于编辑时排除自身）。
@@ -104,6 +124,11 @@ fn account_name_taken(data: &crate::config::Config, name: &str, except_id: Optio
     data.accounts
         .iter()
         .any(|a| a.name == name && Some(a.id.as_str()) != except_id)
+}
+
+/// 落盘配置；错误转成字符串便于在临界区内回滚
+fn save_config(st: &AppState, data: &crate::config::Config) -> Result<(), String> {
+    st.store.save(data).map_err(|e| e.to_string())
 }
 
 /// 各驱动的默认根目录 fid（对齐 Go 版各驱动 meta.go 的 DefaultRoot）
@@ -158,6 +183,8 @@ pub(crate) fn default_root_fid(driver_kind: &str, cred: &Credential) -> String {
         // 阿里云盘开放平台根目录固定为 "root"，传 "0" 会 Bad Request
         "aliyundrive_open" => "root".into(),
         "baidu_netdisk" => "/".into(),
+        // Dropbox 是路径型驱动，根是 ""（normalize_fid("", "0") 会得到 "/0"，列不出根）
+        "dropbox" => String::new(),
         "lanzou" => "-1".into(),
         "halalcloud_open" => "/".into(),
         "netease_music" => "/".into(),
@@ -176,7 +203,7 @@ struct AccountView {
 
 /// GET /api/accounts
 pub(crate) async fn list_accounts(State(st): State<AppState>) -> Json<Value> {
-    let data = st.store.data.lock().unwrap();
+    let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
     let accounts: Vec<AccountView> = data
         .accounts
         .iter()
@@ -1459,16 +1486,6 @@ pub(crate) async fn add_account(
     let acc_name = validate_account_name(&req.name)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?
         .unwrap_or_else(|| driver_display_name(driver_kind).to_string());
-    {
-        let data = st.store.data.lock().unwrap();
-        if account_name_taken(&data, &acc_name, None) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                format!("账号名称「{acc_name}」已存在，请换一个"),
-            ));
-        }
-    }
-
     let acc = Account {
         id: id.clone(),
         name: acc_name,
@@ -1477,15 +1494,24 @@ pub(crate) async fn add_account(
         server_proxy: req.server_proxy,
         enabled: true,
     };
+    // 查重与插入必须同一个临界区，否则并发提交会插出同名账号；
+    // 落盘失败时把刚插入的条目回滚，避免内存与磁盘分叉
     {
-        let mut data = st.store.data.lock().unwrap();
+        let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+        if account_name_taken(&data, &acc.name, None) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("账号名称「{}」已存在，请换一个", acc.name),
+            ));
+        }
         data.accounts.push(acc.clone());
-        st.store.save(&data).map_err(|e| {
-            (
+        if let Err(e) = save_config(&st, &data) {
+            data.accounts.pop();
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("保存配置失败: {e}"),
-            )
-        })?;
+            ));
+        }
     }
     st.drivers
         .lock()
@@ -1506,14 +1532,18 @@ pub(crate) async fn add_account(
 /// 而这里返回的是全量凭据。同时显式 `Cache-Control: no-store` 兜底。
 pub(crate) async fn get_account_secret(
     State(st): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     Path(id): Path<String>,
-) -> Result<Response, (StatusCode, String)> {
-    let data = st.store.data.lock().unwrap();
-    let acc = data
-        .accounts
-        .iter()
-        .find(|a| a.id == id)
-        .ok_or((StatusCode::NOT_FOUND, "账号不存在".to_string()))?;
+    Json(req): Json<crate::auth::ReauthReq>,
+) -> Response {
+    // 与读取 API 令牌同级：这里能吐出全部网盘 Cookie / refresh_token
+    if let Err(resp) = crate::auth::confirm_password(&st, peer.ip(), &req).await {
+        return resp;
+    }
+    let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(acc) = data.accounts.iter().find(|a| a.id == id) else {
+        return (StatusCode::NOT_FOUND, "账号不存在").into_response();
+    };
 
     let mut out = json!({
         "id": acc.id,
@@ -2104,7 +2134,7 @@ pub(crate) async fn get_account_secret(
         axum::http::header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),
     );
-    Ok(resp)
+    resp
 }
 
 /// DELETE /api/accounts/{id}
@@ -2112,23 +2142,34 @@ pub(crate) async fn del_account(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    {
-        let mut data = st.store.data.lock().unwrap();
-        let before = data.accounts.len();
-        data.accounts.retain(|a| a.id != id);
-        if data.accounts.len() == before {
+    // 锁内只取快照，落盘放锁外（redb commit 是阻塞 fsync）；同时留下被删的那条用于回滚
+    let (snapshot, removed) = {
+        let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(pos) = data.accounts.iter().position(|a| a.id == id) else {
             return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
+        };
+        let removed = data.accounts.remove(pos);
+        (data.clone(), removed)
+    };
+    let store = st.store.clone();
+    let saved = tokio::task::spawn_blocking(move || store.save(&snapshot))
+        .await
+        .unwrap_or_else(|e| Err(std::io::Error::other(e.to_string())));
+    if let Err(e) = saved {
+        // 落盘失败：把刚删掉的账号原样插回，避免内存与磁盘分叉
+        let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+        if !data.accounts.iter().any(|a| a.id == removed.id) {
+            data.accounts.push(removed);
         }
-        st.store.save(&data).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("保存配置失败: {e}"),
-            )
-        })?;
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("保存配置失败: {e}"),
+        ));
     }
-    st.drivers.lock().unwrap().remove(&id);
-    // 账号已删除，清空其全部目录缓存
+    st.drivers.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+    // 账号已删除：目录缓存与路径索引都要清，否则同名重建会串到旧 fid
     st.list_cache.invalidate_account(&id);
+    st.invalidate_index_account(&id);
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -2156,7 +2197,7 @@ pub(crate) async fn list_files(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // 禁用的账号不对外提供文件列表
     {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(acc) = data.accounts.iter().find(|a| a.id == q.account) {
             if !acc.enabled {
                 return Err((StatusCode::FORBIDDEN, "该存储已禁用".into()));
@@ -2225,7 +2266,7 @@ pub(crate) async fn search_files(
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     // 禁用的账号不对外提供搜索（与 /api/files 一致）
     {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(acc) = data.accounts.iter().find(|a| a.id == acc_id) {
             if !acc.enabled {
                 return Err((StatusCode::FORBIDDEN, "该存储已禁用".into()));
@@ -2321,7 +2362,7 @@ pub(crate) async fn get_download(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // 取账号的 server_proxy 开关
     let account_server_proxy = {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         data.accounts
             .iter()
             .find(|a| a.id == q.account)
@@ -2415,29 +2456,36 @@ pub(crate) async fn proxy_stream(
         }
     }
 
-    // 115 等网盘的直链需要携带特定 User-Agent，且可能经过 HTTP 重定向。
-    // reqwest 默认重定向时会剥离非标准 header（包括自定义 User-Agent），
-    // 导致 115 服务器在跳转后返回 403 / 无效响应。
-    // 解决方案：禁用自动重定向，手动跟随，每一跳都附带完整自定义头。
+    // 115 等网盘的直链需要携带特定 User-Agent，且可能经过 HTTP 重定向；
+    // reqwest 自动跟随会剥掉自定义头（跳转后 403），所以手动跟随。
+    // 但自定义头里可能含 Cookie/Authorization，绝不能跟到异源去（AUDIT.md P2-5）。
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .unwrap_or_default();
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("构建 HTTP 客户端失败: {e}")))?;
 
-    // 手动跟随重定向（最多 10 跳），每跳都带上 info.headers
+    let origin = Url::parse(&info.url)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("直链无效: {e}")))?;
+    let origin_private = is_private_host(origin.host_str().unwrap_or(""));
+    let mut current = origin.clone();
+
     let range_val = headers
         .get(header::RANGE)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let mut current_url = info.url.clone();
     let mut redirect_count = 0usize;
     let upstream = loop {
         if redirect_count > 10 {
             return Err((StatusCode::BAD_GATEWAY, "重定向次数超限".into()));
         }
-        let mut req = client.get(&current_url);
-        for (k, v) in &info.headers {
-            req = req.header(k.as_str(), v.as_str());
+        let same_origin = current.scheme() == origin.scheme()
+            && current.host_str() == origin.host_str()
+            && current.port_or_known_default() == origin.port_or_known_default();
+        let mut req = client.get(current.as_str());
+        if same_origin {
+            for (k, v) in &info.headers {
+                req = req.header(k.as_str(), v.as_str());
+            }
         }
         if let Some(ref range) = range_val {
             req = req.header(header::RANGE, range.as_str());
@@ -2454,7 +2502,22 @@ pub(crate) async fn proxy_stream(
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string())
                 .ok_or_else(|| (StatusCode::BAD_GATEWAY, "重定向缺少 Location".to_string()))?;
-            current_url = location;
+            // 相对 Location 必须 resolve，否则 reqwest 解析失败直接 502
+            let next = current
+                .join(&location)
+                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("重定向地址无效: {e}")))?;
+            if !matches!(next.scheme(), "http" | "https") {
+                return Err((StatusCode::BAD_GATEWAY, "重定向到不支持的协议".into()));
+            }
+            // 公网直链被跳到内网/本机属于 SSRF；本机挂载的直链在私网内跳转是正常行为
+            let next_host = next.host_str().unwrap_or("");
+            if !origin_private && is_private_host(next_host) {
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("重定向到内网地址已拒绝: {next_host}"),
+                ));
+            }
+            current = next;
             redirect_count += 1;
             continue;
         }
@@ -2474,41 +2537,16 @@ pub(crate) async fn proxy_stream(
             resp_builder = resp_builder.header(&h, v);
         }
     }
-    // Content-Type：上游常给 application/octet-stream（部分 CDN 还带
-    // X-Content-Type-Options: nosniff），浏览器会因此拒绝当媒体播放/预览，
-    // 这里按扩展名纠正（与本地存储同一套规则）
+    // 只认白名单类型：上游给的 text/html、image/svg+xml 等一律降级为附件下载
     let upstream_ctype = upstream
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let ctype =
-        if upstream_ctype.is_empty() || upstream_ctype.starts_with("application/octet-stream") {
-            content_type_by_ext(&e.name).to_string()
-        } else {
-            upstream_ctype.to_string()
-        };
+    let (ctype, disposition) = file_response_meta(&e.name, upstream_ctype, disp);
     resp_builder = resp_builder.header(header::CONTENT_TYPE, ctype);
-    // Content-Disposition：inline 在线播放 / attachment 附件下载
-    let fname = if e.name.is_empty() {
-        "download"
-    } else {
-        &e.name
-    };
-    let encoded: String = fname
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect();
-    resp_builder = resp_builder.header(
-        header::CONTENT_DISPOSITION,
-        format!("{disp}; filename*=UTF-8''{encoded}"),
-    );
+    resp_builder = resp_builder.header(header::CONTENT_DISPOSITION, content_disposition(disposition, &e.name));
+    resp_builder = resp_builder.header("content-security-policy", FILE_CSP);
 
     let stream = upstream.bytes_stream();
     let body = Body::from_stream(stream);
@@ -2557,7 +2595,14 @@ async fn serve_local_file(
         .and_then(|s| parse_range(s, total));
 
     let (status, start, end, content_length) = match range {
-        Some((start, end)) => (StatusCode::PARTIAL_CONTENT, start, end, end - start + 1),
+        Some(RangeReq::Ok(start, end)) => (StatusCode::PARTIAL_CONTENT, start, end, end - start + 1),
+        Some(RangeReq::Unsat) => {
+            return Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::RANGE_NOT_SATISFIABLE.into_response()))
+        }
         None => (StatusCode::OK, 0u64, total.saturating_sub(1), total),
     };
 
@@ -2579,31 +2624,16 @@ async fn serve_local_file(
             format!("bytes {start}-{end}/{total}"),
         );
     }
+    let (ctype, disposition) = file_response_meta(&e.name, "", disp);
     resp = resp
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, content_length)
-        .header(header::CONTENT_TYPE, content_type_by_ext(&e.name));
-
-    // Content-Disposition：inline 在线播放 / attachment 附件下载
-    let fname = if e.name.is_empty() {
-        "download"
-    } else {
-        &e.name
-    };
-    let encoded: String = fname
-        .bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect();
-    resp = resp.header(
-        header::CONTENT_DISPOSITION,
-        format!("{disp}; filename*=UTF-8''{encoded}"),
-    );
+        .header(header::CONTENT_TYPE, ctype)
+        .header(
+            header::CONTENT_DISPOSITION,
+            content_disposition(disposition, &e.name),
+        )
+        .header("content-security-policy", FILE_CSP);
 
     resp.body(Body::from_stream(stream)).map_err(|e| {
         (
@@ -2618,7 +2648,13 @@ async fn serve_local_file(
 /// 需要 `total` 才能正确处理后缀区间 `bytes=-N`（最后 N 字节）——早期实现拿 `u64::MAX`
 /// 当占位，调用方再 `min(total-1)`，结果 `bytes=-500` 只会返回最后 1 个字节，
 /// Safari/iOS 播放视频时会直接报错。
-fn parse_range(s: &str, total: u64) -> Option<(u64, u64)> {
+/// Range 解析结果：`None` = 不认这个头（按整份返回），`Unsat` = 语法合法但越界（回 416）
+enum RangeReq {
+    Ok(u64, u64),
+    Unsat,
+}
+
+fn parse_range(s: &str, total: u64) -> Option<RangeReq> {
     let rest = s.strip_prefix("bytes=")?;
     // 仅取第一个区间
     let first = rest.split(',').next()?.trim();
@@ -2628,26 +2664,28 @@ fn parse_range(s: &str, total: u64) -> Option<(u64, u64)> {
     match (start_s.parse::<u64>(), end_s.parse::<u64>()) {
         // bytes=start-end
         (Ok(start), Ok(end)) => {
-            if start > end || start >= total {
+            if start > end {
                 None
+            } else if start >= total {
+                Some(RangeReq::Unsat)
             } else {
-                Some((start, end.min(last)))
+                Some(RangeReq::Ok(start, end.min(last)))
             }
         }
         // bytes=start-
         (Ok(start), Err(_)) if end_s.is_empty() => {
             if start >= total {
-                None
+                Some(RangeReq::Unsat)
             } else {
-                Some((start, last))
+                Some(RangeReq::Ok(start, last))
             }
         }
         // bytes=-suffix
         (Err(_), Ok(suffix)) if start_s.is_empty() && suffix > 0 => {
             if total == 0 {
-                None
+                Some(RangeReq::Unsat)
             } else {
-                Some((total.saturating_sub(suffix), last))
+                Some(RangeReq::Ok(total.saturating_sub(suffix), last))
             }
         }
         _ => None,
@@ -2674,13 +2712,100 @@ pub(crate) fn content_type_by_ext(name: &str) -> &'static str {
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
-        "svg" => "image/svg+xml",
         "pdf" => "application/pdf",
         "txt" | "md" | "log" | "srt" | "ass" | "vtt" => "text/plain; charset=utf-8",
-        "html" | "htm" => "text/html; charset=utf-8",
         "json" => "application/json",
         _ => "application/octet-stream",
     }
+}
+
+const OCTET_STREAM: &str = "application/octet-stream";
+
+/// 文件响应专用 CSP：被同源打开也不允许执行脚本
+const FILE_CSP: &str = "default-src 'none'; sandbox";
+
+/// 可按白名单内联渲染的扩展名（不含 svg/html，二者可执行脚本）
+fn inline_safe_ext(name: &str) -> Option<&'static str> {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    Some(match ext.as_str() {
+        "mp4" | "m4v" | "mkv" | "webm" | "avi" | "mov" | "flv" | "ts" | "mp3" | "flac" | "ogg"
+        | "opus" | "m4a" | "wav" | "jpg" | "jpeg" | "png" | "gif" | "webp" | "pdf" | "txt" | "md"
+        | "log" | "srt" | "ass" | "vtt" | "json" => content_type_by_ext(name),
+        _ => return None,
+    })
+}
+
+fn inline_safe_ctype(ctype: &str) -> bool {
+    let base = ctype.split(';').next().unwrap_or("").trim();
+    base.len() <= 100
+        && base.bytes().all(|b| b.is_ascii_graphic())
+        && ((base.starts_with("video/")
+            || base.starts_with("audio/")
+            || base.starts_with("image/"))
+            && !base.contains("svg")
+            || base == "application/pdf"
+            || base == "application/json"
+            || base == "text/plain")
+}
+
+/// 是否本机/内网/链路本地地址（用于拦截重定向型 SSRF）
+fn is_private_host(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']);
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+    }
+    let lower = host.to_ascii_lowercase();
+    lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+        || lower.ends_with(".internal")
+}
+
+/// 文件响应的 (Content-Type, Content-Disposition)。
+/// 仅白名单类型允许 inline，其余强制 attachment + octet-stream（见 AUDIT.md P1-1）。
+fn file_response_meta(name: &str, upstream_ctype: &str, disp: &str) -> (String, &'static str) {
+    if disp != "inline" {
+        return (OCTET_STREAM.to_string(), "attachment");
+    }
+    if let Some(ct) = inline_safe_ext(name) {
+        return (ct.to_string(), "inline");
+    }
+    let base = upstream_ctype
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if inline_safe_ctype(&base) {
+        return (base, "inline");
+    }
+    (OCTET_STREAM.to_string(), "attachment")
+}
+
+/// `inline|attachment; filename*=UTF-8''...`，文件名按字节百分号编码
+fn content_disposition(disp: &str, name: &str) -> String {
+    let fname = if name.is_empty() { "download" } else { name };
+    let encoded: String = fname
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect();
+    format!("{disp}; filename*=UTF-8''{encoded}")
 }
 
 /// GET /api/stream —— 面板用流式下载/播放
@@ -2711,7 +2836,7 @@ pub(crate) async fn edit_account(
 ) -> Result<Json<Value>, (StatusCode, String)> {
     // 确认账号存在
     {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         if !data.accounts.iter().any(|a| a.id == id) {
             return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
         }
@@ -3735,40 +3860,70 @@ pub(crate) async fn edit_account(
         }
     };
 
+    // 与库内凭据合并后再校验：驱动自管字段（token / 主机密钥钉扎等）不能被请求体抹掉
+    let stored_cred = {
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+        data.accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.cred.clone())
+    };
+    let req_cred = cred;
+    let cred = match &stored_cred {
+        Some(old) => crate::config::merge_credential(old, req_cred.clone()),
+        None => req_cred.clone(),
+    };
+
     // 用新凭据验证（复用 Driver::new，失败则拒绝保存）
     let new_driver = Driver::new(&id, &cred, st.store.clone())
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
+    // 校验期间驱动可能回写了新 token / 指纹：以库内最新值为底，再叠一次请求里的非空字段
+    let cred = {
+        let latest = {
+            let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+            data.accounts
+                .iter()
+                .find(|a| a.id == id)
+                .map(|a| a.cred.clone())
+        };
+        match latest {
+            Some(latest) => crate::config::merge_credential(&latest, req_cred),
+            None => cred,
+        }
+    };
+
     let new_name = validate_account_name(&req.name)
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?
         .unwrap_or_else(|| driver_display_name(driver_kind).to_string());
+    // 查重与改写同一个临界区：并发编辑不能插出同名账号；
+    // 落盘失败时把账号整条还原，避免内存与磁盘分叉
+    let root_fid = default_root_fid(driver_kind, &cred);
     {
-        let data = st.store.data.lock().unwrap();
+        let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         if account_name_taken(&data, &new_name, Some(&id)) {
             return Err((
                 StatusCode::BAD_REQUEST,
                 format!("账号名称「{new_name}」已存在，请换一个"),
             ));
         }
-    }
-
-    // 原地替换配置，id 保持不变
-    {
-        let mut data = st.store.data.lock().unwrap();
-        if let Some(acc) = data.accounts.iter_mut().find(|a| a.id == id) {
-            acc.name = new_name.clone();
-            // 根目录 fid 随驱动同步更新（本机存储 = 挂载路径，其余 = 驱动默认根 id）
-            acc.root_fid = default_root_fid(driver_kind, &cred);
-            acc.cred = cred;
-            acc.server_proxy = req.server_proxy;
-        }
-        st.store.save(&data).map_err(|e| {
-            (
+        let Some(pos) = data.accounts.iter().position(|a| a.id == id) else {
+            return Err((StatusCode::NOT_FOUND, "账号不存在".into()));
+        };
+        let backup = data.accounts[pos].clone();
+        let acc = &mut data.accounts[pos];
+        acc.name = new_name.clone();
+        acc.root_fid = root_fid;
+        acc.cred = cred;
+        acc.server_proxy = req.server_proxy;
+        if let Err(e) = save_config(&st, &data) {
+            data.accounts[pos] = backup;
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("保存配置失败: {e}"),
-            )
-        })?;
+            ));
+        }
     }
 
     // 替换驱动缓存
@@ -3776,8 +3931,9 @@ pub(crate) async fn edit_account(
         .lock()
         .unwrap()
         .insert(id.clone(), Arc::new(new_driver));
-    // 凭据已变更，清空该账号全部目录缓存，避免展示旧数据
+    // 凭据或挂载根可能已变，目录缓存与路径索引都失效
     st.list_cache.invalidate_account(&id);
+    st.invalidate_index_account(&id);
 
     Ok(Json(
         json!({ "id": id, "name": new_name, "driver": driver_kind }),
@@ -3796,20 +3952,25 @@ pub(crate) async fn patch_account_enabled(
     Json(req): Json<PatchEnabledReq>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     {
-        let mut data = st.store.data.lock().unwrap();
-        let acc = data
+        let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
+        let pos = data
             .accounts
-            .iter_mut()
-            .find(|a| a.id == id)
+            .iter()
+            .position(|a| a.id == id)
             .ok_or((StatusCode::NOT_FOUND, "账号不存在".to_string()))?;
-        acc.enabled = req.enabled;
-        st.store.save(&data).map_err(|e| {
-            (
+        let prev = data.accounts[pos].enabled;
+        data.accounts[pos].enabled = req.enabled;
+        if let Err(e) = save_config(&st, &data) {
+            data.accounts[pos].enabled = prev;
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("保存配置失败: {e}"),
-            )
-        })?;
+            ));
+        }
     }
+    // 缓存里可能已有该账号的目录/路径，切换状态后必须一起失效
+    st.list_cache.invalidate_account(&id);
+    st.invalidate_index_account(&id);
     Ok(Json(json!({ "id": id, "enabled": req.enabled })))
 }
 
@@ -3830,7 +3991,7 @@ pub(crate) async fn offline_tools(
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     {
-        let data = st.store.data.lock().unwrap();
+        let data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(acc) = data.accounts.iter().find(|a| a.id == account_id) {
             if !acc.enabled {
                 return Err((StatusCode::FORBIDDEN, "该存储已禁用".into()));
@@ -3963,6 +4124,63 @@ pub(crate) async fn offline_remove(
 mod tests {
     use super::*;
 
+    /// 只有白名单类型能 inline，其余降级为附件（AUDIT.md P1-1）
+    #[test]
+    fn file_response_meta_blocks_active_content() {
+        for name in ["evil.html", "evil.htm", "evil.svg", "evil.xhtml", "evil.xml"] {
+            assert_eq!(
+                file_response_meta(name, "text/html", "inline"),
+                (OCTET_STREAM.to_string(), "attachment"),
+                "{name} 不该被内联"
+            );
+        }
+        // 上游谎报类型也不能把非白名单扩展名提成可执行内容
+        assert_eq!(
+            file_response_meta("noext", "text/html; charset=utf-8", "inline"),
+            (OCTET_STREAM.to_string(), "attachment")
+        );
+        // 媒体与文本保持 inline
+        assert_eq!(
+            file_response_meta("a.mp4", "", "inline"),
+            ("video/mp4".to_string(), "inline")
+        );
+        assert_eq!(
+            file_response_meta("a.txt", "", "inline"),
+            ("text/plain; charset=utf-8".to_string(), "inline")
+        );
+        // 明确要下载时一律 octet-stream
+        assert_eq!(
+            file_response_meta("a.mp4", "", "attachment"),
+            (OCTET_STREAM.to_string(), "attachment")
+        );
+        // 无扩展名但上游给了安全媒体类型时沿用
+        assert_eq!(
+            file_response_meta("clip", "video/mp4", "inline"),
+            ("video/mp4".to_string(), "inline")
+        );
+    }
+
+    /// 重定向目标的内网判定（AUDIT.md P2-5）
+    #[test]
+    fn private_host_detection() {
+        for h in [
+            "127.0.0.1",
+            "169.254.169.254",
+            "10.0.0.5",
+            "192.168.1.1",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "localhost",
+            "a.local",
+        ] {
+            assert!(is_private_host(h), "{h} 应判为内网");
+        }
+        for h in ["1.1.1.1", "8.8.8.8", "cdn.example.com"] {
+            assert!(!is_private_host(h), "{h} 不该判为内网");
+        }
+    }
+
     fn any_cred() -> Credential {
         Credential::Local {
             root_path: "/mnt/data".into(),
@@ -4046,6 +4264,16 @@ mod tests {
         };
         assert_eq!(default_root_fid("google_drive", &gdrive("")), "root");
         assert_eq!(default_root_fid("google_drive", &gdrive("fid1")), "fid1");
+        // 路径型驱动的根是空串：给 "0" 会被拼成 /0 导致根目录列不出
+        let dropbox = Credential::Dropbox {
+            refresh_token: "rt".into(),
+            access_token: String::new(),
+            root_path: String::new(),
+            use_online_api: true,
+            client_id: String::new(),
+            client_secret: String::new(),
+        };
+        assert_eq!(default_root_fid("dropbox", &dropbox), "");
     }
 
     /// 与 Go 版的分歧，仅钉住现状：Go 版 thunder 无 DefaultRoot，根用空串；
@@ -4057,32 +4285,37 @@ mod tests {
 
     #[test]
     fn test_parse_range_with_total() {
+        let ok = |r: Option<RangeReq>| match r {
+            Some(RangeReq::Ok(a, b)) => Some((a, b)),
+            _ => None,
+        };
+        let unsat = |r: Option<RangeReq>| matches!(r, Some(RangeReq::Unsat));
         // 显式闭区间
-        assert_eq!(parse_range("bytes=0-99", 1000), Some((0, 99)));
-        assert_eq!(parse_range("bytes=0-0", 1000), Some((0, 0)));
+        assert_eq!(ok(parse_range("bytes=0-99", 1000)), Some((0, 99)));
+        assert_eq!(ok(parse_range("bytes=0-0", 1000)), Some((0, 0)));
         // 开区间到结尾
-        assert_eq!(parse_range("bytes=100-", 1000), Some((100, 999)));
-        assert_eq!(parse_range("bytes=999-", 1000), Some((999, 999)));
+        assert_eq!(ok(parse_range("bytes=100-", 1000)), Some((100, 999)));
+        assert_eq!(ok(parse_range("bytes=999-", 1000)), Some((999, 999)));
         // 后缀区间：最后 N 字节（回归用例：曾只返回最后 1 字节）
-        assert_eq!(parse_range("bytes=-500", 1000), Some((500, 999)));
-        assert_eq!(parse_range("bytes=-1", 1000), Some((999, 999)));
-        assert_eq!(parse_range("bytes=-1000", 1000), Some((0, 999)));
-        assert_eq!(parse_range("bytes=-5000", 1000), Some((0, 999)));
+        assert_eq!(ok(parse_range("bytes=-500", 1000)), Some((500, 999)));
+        assert_eq!(ok(parse_range("bytes=-1", 1000)), Some((999, 999)));
+        assert_eq!(ok(parse_range("bytes=-1000", 1000)), Some((0, 999)));
+        assert_eq!(ok(parse_range("bytes=-5000", 1000)), Some((0, 999)));
         // 超出文件尾 -> 截到结尾
-        assert_eq!(parse_range("bytes=0-99999", 1000), Some((0, 999)));
-        // 起点越过文件尾 -> 不返回区间（整体 200）
-        assert_eq!(parse_range("bytes=1000-", 1000), None);
-        assert_eq!(parse_range("bytes=1000-2000", 1000), None);
+        assert_eq!(ok(parse_range("bytes=0-99999", 1000)), Some((0, 999)));
+        // 起点越过文件尾 -> 416（语法合法但不可满足）
+        assert!(unsat(parse_range("bytes=1000-", 1000)));
+        assert!(unsat(parse_range("bytes=1000-2000", 1000)));
         // 多区间只取第一段
-        assert_eq!(parse_range("bytes=0-1,5-9", 1000), Some((0, 1)));
-        // 非法头部
-        assert_eq!(parse_range("bytes=-", 1000), None);
-        assert_eq!(parse_range("bytes=abc", 1000), None);
-        assert_eq!(parse_range("bytes=5-2", 1000), None);
-        assert_eq!(parse_range("items=0-1", 1000), None);
-        // 空文件
-        assert_eq!(parse_range("bytes=0-", 0), None);
-        assert_eq!(parse_range("bytes=-10", 0), None);
+        assert_eq!(ok(parse_range("bytes=0-1,5-9", 1000)), Some((0, 1)));
+        // 非法头部 -> 忽略 Range，按整份返回
+        assert!(parse_range("bytes=-", 1000).is_none());
+        assert!(parse_range("bytes=abc", 1000).is_none());
+        assert!(parse_range("bytes=5-2", 1000).is_none());
+        assert!(parse_range("items=0-1", 1000).is_none());
+        // 空文件：任何区间都不可满足
+        assert!(unsat(parse_range("bytes=0-", 0)));
+        assert!(unsat(parse_range("bytes=-10", 0)));
     }
 
     /// L-9：账号名校验
@@ -4099,6 +4332,12 @@ mod tests {
         assert!(validate_account_name("..").is_err());
         assert!(validate_account_name(".").is_err());
         assert!(validate_account_name("a\tb").is_err(), "控制字符应被拒");
+        // 零宽 / 双向覆盖会让名称显示成另一个样子
+        assert!(validate_account_name("\u{202E}gpj.exe").is_err());
+        assert!(validate_account_name("a\u{200B}b").is_err());
+        // 长度上限
+        assert!(validate_account_name(&"网".repeat(65)).is_err());
+        assert!(validate_account_name(&"网".repeat(64)).is_ok());
     }
 
     /// L-9：重名检测（编辑时排除自身）

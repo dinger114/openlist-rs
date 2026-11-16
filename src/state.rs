@@ -26,7 +26,7 @@ impl ListCache {
 
     /// 命中返回条目副本，过期条目视为不存在
     pub(crate) fn get(&self, key: &str) -> Option<Vec<Entry>> {
-        let map = self.map.lock().unwrap();
+        let map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         map.get(key)
             .filter(|(t, _)| t.elapsed() < Self::TTL)
             .map(|(_, entries)| entries.clone())
@@ -34,7 +34,7 @@ impl ListCache {
 
     /// 写入缓存；满时先淘汰过期项，仍满则放弃本次写入
     pub(crate) fn set(&self, key: &str, entries: Vec<Entry>) {
-        let mut map = self.map.lock().unwrap();
+        let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         if map.len() >= Self::MAX_ENTRIES {
             map.retain(|_, (t, _)| t.elapsed() < Self::TTL);
             if map.len() >= Self::MAX_ENTRIES {
@@ -55,7 +55,7 @@ impl ListCache {
 
     /// 删除单条目录缓存（写操作后精确失效：key = "{账号id}:{fid}"）
     pub(crate) fn invalidate_key(&self, key: &str) {
-        self.map.lock().unwrap().remove(key);
+        self.map.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
     }
 }
 
@@ -81,12 +81,14 @@ pub(crate) fn random_password() -> String {
 /// 缺失时初始化为 admin + 随机 8 位密码，打印到终端并持久化（之后启动不再生成）
 fn init_web_auth(store: &Store) -> AuthCfg {
     let (user_opt, pass_opt) = {
-        let data = store.data.lock().unwrap();
+        let data = store.data.lock().unwrap_or_else(|e| e.into_inner());
         (data.web_user.clone(), data.web_pass.clone())
     };
     let mut user = user_opt.filter(|s| !s.is_empty());
     let mut pass = pass_opt.filter(|s| !s.is_empty());
     let mut changed = false;
+    // 首启生成的明文只在本次调用里存在，用于 TTY 打印或落盘到数据目录
+    let mut plain_generated: Option<String> = None;
     if user.is_none() {
         println!("面板用户名未设置，已初始化为: admin");
         user = Some("admin".to_string());
@@ -94,12 +96,16 @@ fn init_web_auth(store: &Store) -> AuthCfg {
     }
     if pass.is_none() {
         let p = random_password();
-        println!("面板密码未设置，已生成随机密码: {p}");
-        // 落库的一定是哈希：这里是唯一拿到明文的地方，且明文只打印这一次
+        let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+        if tty {
+            println!("面板密码未设置，已生成随机密码: {p}");
+        }
+        // 落库的一定是哈希：这里是唯一拿到明文的地方
         pass = Some(
             crate::password::hash_password(&p)
                 .unwrap_or_else(|e| panic!("生成面板密码哈希失败: {e}")),
         );
+        plain_generated = Some(p);
         changed = true;
     } else if let Some(p) = pass.clone() {
         // 老库（明文存密码）在启动时就地升级，不等首次登录；也是幂等的
@@ -117,10 +123,16 @@ fn init_web_auth(store: &Store) -> AuthCfg {
             .update_web_auth(user.clone(), pass.clone())
             .unwrap_or_else(|e| eprintln!("面板账号持久化失败: {e}"));
     }
+    let user = user.unwrap();
+    let (token, token_new) = init_api_token(store);
+    if plain_generated.is_some() || token_new {
+        let token_for_file = if token_new { Some(token.as_str()) } else { None };
+        store.save_initial_credentials(&user, plain_generated.as_deref(), token_for_file);
+    }
     AuthCfg {
-        user: user.unwrap(),
+        user,
         pass: pass.unwrap(),
-        token: init_api_token(store),
+        token,
     }
 }
 
@@ -128,17 +140,24 @@ fn init_web_auth(store: &Store) -> AuthCfg {
 ///
 /// 与面板密码同样的「只在首次生成时打印明文」策略：令牌是长期有效的管理员凭据，
 /// 之后要拿只能在面板设置页看（那里有遮罩 + 复制）。
-fn init_api_token(store: &Store) -> String {
-    let existing = store.data.lock().unwrap().api_token.clone();
+fn init_api_token(store: &Store) -> (String, bool) {
+    let existing = store
+        .data
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .api_token
+        .clone();
     if let Some(t) = existing.filter(|s| !s.is_empty()) {
-        return t;
+        return (t, false);
     }
     let token = crate::token::generate();
-    println!("API 令牌未设置，已生成（供 ostrm / 第三方客户端使用）: {token}");
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        println!("API 令牌未设置，已生成（供 ostrm / 第三方客户端使用）: {token}");
+    }
     if let Err(e) = store.update_api_token(Some(token.clone())) {
         eprintln!("API 令牌持久化失败: {e}");
     }
-    token
+    (token, true)
 }
 
 /// 会话记录：只存最后使用时间（TTL 与滑动续期见 SESSION_TTL / session_valid_at）
@@ -194,16 +213,36 @@ impl AppState {
         }
     }
 
-    /// 按账号 id 惰性构建驱动（首次使用时验证凭据并缓存）
+    /// 账号是否启用；账号不存在返回 None
+    pub(crate) fn account_enabled(&self, id: &str) -> Option<bool> {
+        self.store
+            .data
+            .lock()
+            .unwrap()
+            .accounts
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.enabled)
+    }
+
+    /// 按账号 id 惰性构建驱动（首次使用时验证凭据并缓存）。
+    /// 禁用的账号在这里统一拒绝，所有数据路径（含 /d /p、兼容层、WebDAV）随之生效。
     pub(crate) async fn get_driver(&self, id: &str) -> Result<Arc<Driver>, String> {
+        let enabled = match self.account_enabled(id) {
+            Some(e) => e,
+            None => return Err("账号不存在".into()),
+        };
+        if !enabled {
+            return Err("该存储已禁用".into());
+        }
         {
-            let drivers = self.drivers.lock().unwrap();
+            let drivers = self.drivers.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(d) = drivers.get(id) {
                 return Ok(d.clone());
             }
         }
         let cred = {
-            let data = self.store.data.lock().unwrap();
+            let data = self.store.data.lock().unwrap_or_else(|e| e.into_inner());
             data.accounts
                 .iter()
                 .find(|a| a.id == id)
@@ -213,7 +252,7 @@ impl AppState {
             return Err("账号不存在".into());
         };
         let d = Arc::new(Driver::new(&id, &cred, self.store.clone()).await?);
-        self.drivers.lock().unwrap().insert(id, d.clone());
+        self.drivers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, d.clone());
         Ok(d)
     }
 
@@ -252,7 +291,7 @@ impl AppState {
 
     /// 签发会话：登记当前时刻（token 由调用方生成）
     pub(crate) fn issue_session(&self, token: String) {
-        self.sessions.lock().unwrap().insert(
+        self.sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(
             token,
             SessionInfo {
                 last_seen: Instant::now(),
@@ -268,7 +307,7 @@ impl AppState {
     /// 带时间参数的会话校验：过期即删除，未过期则刷新最后使用时间。
     /// 时间由参数传入，单测才能钉死行为（不依赖真实时钟）。
     pub(crate) fn session_valid_at(&self, token: &str, now: Instant) -> bool {
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         match sessions.get_mut(token) {
             Some(info) if now.saturating_duration_since(info.last_seen) < SESSION_TTL => {
                 info.last_seen = now;
@@ -284,12 +323,12 @@ impl AppState {
 
     /// 登出：删除指定会话
     pub(crate) fn drop_session(&self, token: &str) {
-        self.sessions.lock().unwrap().remove(token);
+        self.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(token);
     }
 
     /// 清空全部会话（改密码后调用，所有端需重新登录）
     pub(crate) fn clear_sessions(&self) {
-        self.sessions.lock().unwrap().clear();
+        self.sessions.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// 从当前 store.data 重建内存鉴权态（恢复备份后调用）。
@@ -306,7 +345,7 @@ impl AppState {
     /// 清扫过期会话，返回清掉的条数（后台定期调用；校验路径上是惰性过期）
     pub(crate) fn sweep_sessions(&self) -> usize {
         let now = Instant::now();
-        let mut sessions = self.sessions.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
         let before = sessions.len();
         sessions.retain(|_, info| now.saturating_duration_since(info.last_seen) < SESSION_TTL);
         before - sessions.len()
@@ -338,7 +377,7 @@ mod tests {
         // 超过 TTL（从最后一次使用 near2 起算）：失效且被删除
         let expired = near2 + SESSION_TTL + Duration::from_secs(1);
         assert!(!st.session_valid_at("tok", expired));
-        assert!(st.sessions.lock().unwrap().is_empty(), "过期会话必须被删除");
+        assert!(st.sessions.lock().unwrap_or_else(|e| e.into_inner()).is_empty(), "过期会话必须被删除");
         assert!(!st.session_valid("tok"));
     }
 
@@ -354,7 +393,7 @@ mod tests {
         assert!(st.session_valid("b"));
         st.clear_sessions();
         assert!(!st.session_valid("b"));
-        assert_eq!(st.sessions.lock().unwrap().len(), 0);
+        assert_eq!(st.sessions.lock().unwrap_or_else(|e| e.into_inner()).len(), 0);
     }
 
     /// 后台清扫只清过期的，未过期的留着
@@ -367,14 +406,14 @@ mod tests {
             return;
         };
         {
-            let mut sessions = st.sessions.lock().unwrap();
+            let mut sessions = st.sessions.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(info) = sessions.get_mut("old") {
                 info.last_seen = old;
             }
         }
         st.issue_session("new".into());
         assert_eq!(st.sweep_sessions(), 1);
-        assert!(st.sessions.lock().unwrap().contains_key("new"));
+        assert!(st.sessions.lock().unwrap_or_else(|e| e.into_inner()).contains_key("new"));
     }
 
     /// 老库的明文密码：启动时就地升级成 argon2 哈希，且不影响后续校验
@@ -388,7 +427,7 @@ mod tests {
             let store = Store::load(&dir_s);
             store.update_web_auth(Some("admin".into()), None).unwrap();
             {
-                let mut data = store.data.lock().unwrap();
+                let mut data = store.data.lock().unwrap_or_else(|e| e.into_inner());
                 data.web_pass = Some("plain-old-pass".into());
                 let snapshot = data.clone();
                 drop(data);
@@ -403,7 +442,7 @@ mod tests {
         );
         assert!(crate::password::verify_password(&stored, "plain-old-pass").ok);
         // 库里也必须是哈希（不是只在内存里换了）
-        let in_db = st.store.data.lock().unwrap().web_pass.clone().unwrap();
+        let in_db = st.store.data.lock().unwrap_or_else(|e| e.into_inner()).web_pass.clone().unwrap();
         assert_eq!(in_db, stored);
     }
 
@@ -451,7 +490,7 @@ mod tests {
         // 重置令牌不该把面板会话踢下线
         assert!(st.credential_valid("sess"), "会话不受令牌重置影响");
 
-        let in_db = st.store.data.lock().unwrap().api_token.clone().unwrap();
+        let in_db = st.store.data.lock().unwrap_or_else(|e| e.into_inner()).api_token.clone().unwrap();
         assert_eq!(in_db, new, "新令牌必须落库");
     }
 
@@ -464,7 +503,7 @@ mod tests {
 
         // 模拟恢复备份：直接改库（绕过 update_web_auth），写明文口令
         {
-            let mut data = st.store.data.lock().unwrap();
+            let mut data = st.store.data.lock().unwrap_or_else(|e| e.into_inner());
             data.web_user = Some("restored-admin".into());
             data.web_pass = Some("plaintext-from-old-backup".into());
             data.api_token = Some("openlist-restored-token".into());
@@ -487,7 +526,7 @@ mod tests {
         assert_ne!(old_user, st.auth.read().unwrap().user);
 
         // 收口同时要回写数据库：库里也不能留明文
-        let in_db = st.store.data.lock().unwrap().web_pass.clone().unwrap();
+        let in_db = st.store.data.lock().unwrap_or_else(|e| e.into_inner()).web_pass.clone().unwrap();
         assert!(
             crate::password::is_hashed(&in_db),
             "数据库里的口令也必须是哈希"

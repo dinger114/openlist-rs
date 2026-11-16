@@ -50,7 +50,7 @@ struct RefreshGuard<'a> {
 impl<'a> RefreshGuard<'a> {
     /// 抢占刷新权；已有其他任务在刷时返回 None（调用方直接放弃本次刷新）。
     fn acquire(flag: &'a std::sync::Mutex<bool>) -> Option<Self> {
-        let mut held = flag.lock().unwrap();
+        let mut held = flag.lock().unwrap_or_else(|e| e.into_inner());
         if *held {
             return None;
         }
@@ -61,7 +61,7 @@ impl<'a> RefreshGuard<'a> {
 
 impl Drop for RefreshGuard<'_> {
     fn drop(&mut self) {
-        *self.flag.lock().unwrap() = false;
+        *self.flag.lock().unwrap_or_else(|e| e.into_inner()) = false;
     }
 }
 
@@ -105,8 +105,8 @@ impl Weiyun {
     }
 
     fn cookie_header(&self) -> String {
-        let map = self.cookies.lock().unwrap();
-        let order = self.cookie_order.lock().unwrap();
+        let map = self.cookies.lock().unwrap_or_else(|e| e.into_inner());
+        let order = self.cookie_order.lock().unwrap_or_else(|e| e.into_inner());
         order
             .iter()
             .filter_map(|k| map.get(k).map(|v| format!("{k}={v}")))
@@ -117,8 +117,8 @@ impl Weiyun {
     /// 对齐 Go 版 cookie jar：每次响应的 Set-Cookie 滚动并入 cookie 存储，
     /// 微云会经 Set-Cookie 轮换会话字段，丢弃会导致后续请求被网关拒绝
     fn store_cookies(&self, headers: &reqwest::header::HeaderMap) {
-        let mut map = self.cookies.lock().unwrap();
-        let mut order = self.cookie_order.lock().unwrap();
+        let mut map = self.cookies.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.cookie_order.lock().unwrap_or_else(|e| e.into_inner());
         for v in headers.get_all(reqwest::header::SET_COOKIE) {
             let Ok(s) = v.to_str() else { continue };
             // 只取第一个 k=v 对（忽略 Path/Domain/Expires 等属性）
@@ -233,8 +233,8 @@ impl Weiyun {
             return Err(format!("微信刷新 token 失败(errcode={errcode}): {errmsg}"));
         }
         // 对齐 SetCookieValue：回写 cookie 中的同名字段（无则新增）
-        let mut map = self.cookies.lock().unwrap();
-        let mut order = self.cookie_order.lock().unwrap();
+        let mut map = self.cookies.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.cookie_order.lock().unwrap_or_else(|e| e.into_inner());
         for key in ["openid", "access_token", "refresh_token"] {
             if let Some(nv) = v.get(key).and_then(|x| x.as_str()) {
                 if nv.is_empty() {
@@ -416,7 +416,7 @@ impl Weiyun {
             return Ok(self.root_folder_id.clone());
         }
         {
-            let k = self.main_dir_key.lock().unwrap();
+            let k = self.main_dir_key.lock().unwrap_or_else(|e| e.into_inner());
             if !k.is_empty() {
                 return Ok(k.clone());
             }
@@ -430,7 +430,7 @@ impl Weiyun {
         if key.is_empty() {
             return Err("微云未获取到账号主目录".into());
         }
-        *self.main_dir_key.lock().unwrap() = key.clone();
+        *self.main_dir_key.lock().unwrap_or_else(|e| e.into_inner()) = key.clone();
         Ok(key)
     }
 
@@ -468,7 +468,12 @@ impl Weiyun {
         };
         let mut out = Vec::new();
         let mut start: i64 = 0;
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let data = json!({
                 "dir_key": dir_key,
                 "start": start,

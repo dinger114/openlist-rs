@@ -115,9 +115,9 @@ impl QuarkUcTv {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str, device_id: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
-        *self.device_id.lock().unwrap() = device_id.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
+        *self.device_id.lock().unwrap_or_else(|e| e.into_inner()) = device_id.to_string();
         let (r, a, d) = (
             refresh.to_string(),
             access.to_string(),
@@ -156,10 +156,10 @@ impl QuarkUcTv {
             .unwrap()
             .as_millis()
             .to_string();
-        let mut device_id = self.device_id.lock().unwrap().clone();
+        let mut device_id = self.device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if device_id.is_empty() {
             device_id = hex::encode(Md5::digest(tm.as_bytes()));
-            *self.device_id.lock().unwrap() = device_id.clone();
+            *self.device_id.lock().unwrap_or_else(|e| e.into_inner()) = device_id.clone();
         }
         let req_id = hex::encode(Md5::digest(format!("{device_id}{tm}").as_bytes()));
         let token_data = format!("{method}&{pathname}&{tm}&{}", self.conf.sign_key);
@@ -168,7 +168,7 @@ impl QuarkUcTv {
     }
 
     async fn refresh_by_token(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if rt.is_empty() {
             return Err("refresh_token 为空，请先在 TV 端完成扫码授权后填入".into());
         }
@@ -213,7 +213,7 @@ impl QuarkUcTv {
                 .unwrap_or("unknown");
             return Err(format!("刷新 TV token 失败: {msg}"));
         }
-        let did = self.device_id.lock().unwrap().clone();
+        let did = self.device_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         self.save_tokens(&refresh, &access, &did);
         Ok(())
     }
@@ -227,7 +227,7 @@ impl QuarkUcTv {
         retried: bool,
     ) -> Result<Value, String> {
         let (tm, token, req_id) = self.generate_req_sign(method.as_str(), pathname);
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let url = format!("{}{pathname}", self.conf.api);
         let mut req = self
             .http
@@ -280,7 +280,7 @@ impl QuarkUcTv {
     }
 
     pub async fn validate(&self) -> Result<(), String> {
-        if self.access_token.lock().unwrap().is_empty() {
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.refresh_by_token().await?;
         }
         // 探测列表

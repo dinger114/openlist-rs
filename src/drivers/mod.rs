@@ -182,6 +182,25 @@ pub(crate) fn normalize_abs_path(path: &str) -> String {
     format!("/{}", parts.join("/"))
 }
 
+/// 列表分页硬上限：防恶意/异常上游无限翻页（超过即报错，不静默截断）
+pub(crate) const MAX_LIST_PAGES: usize = 200;
+
+/// 校验单个名称（文件名/新名）：不能含分隔符、不能是 `.` / `..`、不能含 NUL。
+/// 写操作的 name 由请求体直接给出，不走 fid 归一化，必须单独把关（AUDIT.md P2-11）。
+pub(crate) fn validate_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("名称不能为空".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err("名称不能包含路径分隔符".into());
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err("名称不能是 . 或 ..".into());
+    }
+    Ok(())
+}
+
 /// `path` 是否在 `root` 之下（两者都应是 normalize_abs_path 的结果）。
 pub(crate) fn path_under_root(root: &str, path: &str) -> bool {
     let root = normalize_abs_path(root);
@@ -1402,6 +1421,16 @@ impl Driver {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn validate_name_rejects_separators_and_dots() {
+        use super::validate_name;
+        assert!(validate_name("a.txt").is_ok());
+        assert!(validate_name("目录").is_ok());
+        for bad in ["", " ", "../x", "a/b", "a\\b", "..", ".", "a\0b"] {
+            assert!(validate_name(bad).is_err(), "{bad:?} 应被拒");
+        }
+    }
+
     use super::*;
 
     /// M-5：预分配必须封顶 —— 客户端声明 u64::MAX 时不能直接尝试分配

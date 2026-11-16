@@ -5,7 +5,27 @@
       <h2>API 令牌</h2>
     </div>
     <div class="panel-body">
-      <div class="tok-field">
+      <div v-if="!unlocked" class="tok-field">
+        <label>验证当前密码</label>
+        <div class="tok-row">
+          <input
+            v-model="pw"
+            type="password"
+            class="tok-input"
+            placeholder="当前面板密码"
+            autocomplete="current-password"
+            @keyup.enter="unlock"
+          />
+          <button class="btn btn-primary btn-sm" :disabled="unlocking" @click="unlock">
+            <Icon name="lock" :size="14" />{{ unlocking ? '验证中…' : '解锁' }}
+          </button>
+        </div>
+        <p class="hint-text tok-signhint">
+          查看或重置令牌需要再次确认当前密码：仅凭已登录会话不应能复制走一枚长期有效的凭据。
+        </p>
+      </div>
+
+      <div v-else class="tok-field">
         <label>令牌</label>
         <div class="tok-row">
           <code class="tok-code" :class="{ masked: !revealed }">{{ display }}</code>
@@ -63,10 +83,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from './Icon.vue'
 
 const token = ref('')
+const pw = ref('')
+const unlocked = ref(false)
+const unlocking = ref(false)
 const revealed = ref(false)
 const copied = ref(false)
 const resetting = ref(false)
@@ -86,16 +109,28 @@ const display = computed(() => {
 // 文档示例里的令牌占位：展开时直接用真值，便于连文档一起复制
 const authExample = computed(() => (revealed.value && token.value ? token.value : '（令牌）'))
 
-onMounted(load)
+async function postToken(url) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ old_password: pw.value })
+  })
+  const b = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(b.error || '请求失败')
+  return b
+}
 
-async function load() {
+async function unlock() {
+  error.value = ''
+  unlocking.value = true
   try {
-    const r = await fetch('/api/web/token')
-    if (!r.ok) throw new Error('读取失败')
-    const b = await r.json()
+    const b = await postToken('/api/web/token')
     token.value = b.token || ''
+    unlocked.value = true
   } catch (e) {
-    error.value = e.message || '读取令牌失败'
+    error.value = e.message
+  } finally {
+    unlocking.value = false
   }
 }
 
@@ -131,9 +166,7 @@ async function reset() {
   error.value = ''
   resetting.value = true
   try {
-    const r = await fetch('/api/web/token/reset', { method: 'POST' })
-    const b = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(b.error || '重置失败')
+    const b = await postToken('/api/web/token/reset')
     token.value = b.token || ''
     revealed.value = true
   } catch (e) {
@@ -225,6 +258,16 @@ async function resetSignKey() {
 }
 .tok-reset {
   color: var(--ol-danger);
+}
+.tok-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ol-text);
+  background: var(--ol-bg);
+  border: 1px solid var(--ol-border);
+  border-radius: var(--ol-radius-sm);
 }
 .tok-usage {
   margin: 0 0 12px;

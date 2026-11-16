@@ -217,7 +217,7 @@ impl Thunder {
             .header("x-client-id", CLIENT_ID)
             .header("x-client-version", CLIENT_VERSION);
         if auth {
-            let token = self.token.lock().unwrap().clone();
+            let token = self.token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let Some(t) = token else {
                 return Err("迅雷未登录（token 为空）".into());
             };
@@ -228,7 +228,7 @@ impl Thunder {
                 )
                 .header(
                     "x-captcha-token",
-                    self.captcha_token.lock().unwrap().clone(),
+                    self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()).clone(),
                 );
         }
         if let Some(q) = query {
@@ -318,7 +318,7 @@ impl Thunder {
 
     /// 对齐 refreshCaptchaToken()
     async fn refresh_captcha_token(&self, action: &str, metas: Value) -> Result<(), String> {
-        let cur = self.captcha_token.lock().unwrap().clone();
+        let cur = self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "action": action,
             "captcha_token": cur,
@@ -352,7 +352,7 @@ impl Thunder {
         if token.is_empty() {
             return Err("迅雷 captcha_token 为空".into());
         }
-        *self.captcha_token.lock().unwrap() = token.clone();
+        *self.captcha_token.lock().unwrap_or_else(|e| e.into_inner()) = token.clone();
         self.save_credential("", &token);
         Ok(())
     }
@@ -399,7 +399,7 @@ impl Thunder {
         if let Some(refresh) = cur {
             match self._refresh_token(&refresh).await {
                 Ok(t) => {
-                    *self.token.lock().unwrap() = Some(t);
+                    *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
                     return Ok(());
                 }
                 Err(_) => return self.login().await,
@@ -531,18 +531,18 @@ impl Thunder {
             return Err("迅雷登录失败：未返回 refresh_token".into());
         }
         let t = token_from(&resp);
-        *self.token.lock().unwrap() = Some(t.clone());
+        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(t.clone());
         self.save_credential(&t.refresh_token, "");
         Ok(())
     }
 
     /// 对齐 Init()/IsLogin()：登录并校验
     pub async fn validate(&self) -> Result<(), String> {
-        if self.token.lock().unwrap().is_none() {
+        if self.token.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
             if !self.saved_refresh.is_empty() {
                 match self._refresh_token(&self.saved_refresh.clone()).await {
                     Ok(t) => {
-                        *self.token.lock().unwrap() = Some(t);
+                        *self.token.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
                     }
                     Err(_) => self.login().await?,
                 }

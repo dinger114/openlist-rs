@@ -56,7 +56,7 @@ impl GooglePhoto {
     }
 
     fn save_access(&self, access: &str) {
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let id = self.account_id.clone();
         let a = access.to_string();
         self.store.update_credential(&id, |c| {
@@ -67,7 +67,7 @@ impl GooglePhoto {
     }
 
     async fn refresh(&self) -> Result<(), String> {
-        let rt = self.refresh_token.lock().unwrap().clone();
+        let rt = self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if rt.is_empty() {
             return Err("Google Photos 需要 refresh_token".into());
         }
@@ -99,10 +99,10 @@ impl GooglePhoto {
     }
 
     async fn ensure_token(&self) -> Result<String, String> {
-        let at = self.access_token.lock().unwrap().clone();
+        let at = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if at.is_empty() {
             self.refresh().await?;
-            return Ok(self.access_token.lock().unwrap().clone());
+            return Ok(self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone());
         }
         Ok(at)
     }
@@ -122,7 +122,7 @@ impl GooglePhoto {
             let text = resp.text().await.unwrap_or_default();
             if status == 401 && attempt == 0 {
                 self.refresh().await?;
-                token = self.access_token.lock().unwrap().clone();
+                token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 continue;
             }
             if !(200..300).contains(&status) {
@@ -151,7 +151,7 @@ impl GooglePhoto {
             let text = resp.text().await.unwrap_or_default();
             if status == 401 && attempt == 0 {
                 self.refresh().await?;
-                token = self.access_token.lock().unwrap().clone();
+                token = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 continue;
             }
             if !(200..300).contains(&status) {
@@ -423,6 +423,6 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n])
+        format!("{}…", super::truncate_bytes(s, n))
     }
 }

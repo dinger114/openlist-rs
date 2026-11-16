@@ -40,8 +40,8 @@ impl Aliyundrive {
     }
 
     fn save_tokens(&self, refresh: &str, access: &str) {
-        *self.refresh_token.lock().unwrap() = refresh.to_string();
-        *self.access_token.lock().unwrap() = access.to_string();
+        *self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()) = refresh.to_string();
+        *self.access_token.lock().unwrap_or_else(|e| e.into_inner()) = access.to_string();
         let (r, a) = (refresh.to_string(), access.to_string());
         let id = self.account_id.clone();
         self.store.update_credential(&id, |cred| {
@@ -59,7 +59,7 @@ impl Aliyundrive {
 
     async fn refresh(&self) -> Result<(), String> {
         let body = json!({
-            "refresh_token": self.refresh_token.lock().unwrap().clone(),
+            "refresh_token": self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             "grant_type": "refresh_token",
         });
         let resp = self
@@ -107,7 +107,7 @@ impl Aliyundrive {
         retried: bool,
     ) -> Result<Value, String> {
         let url = format!("{API}{path}");
-        let access = self.access_token.lock().unwrap().clone();
+        let access = self.access_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut req = self
             .http
             .request(method.clone(), &url)
@@ -139,10 +139,10 @@ impl Aliyundrive {
     }
 
     pub async fn validate(&self) -> Result<(), String> {
-        if self.refresh_token.lock().unwrap().is_empty() {
+        if self.refresh_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             return Err("refresh_token 不能为空".into());
         }
-        if self.access_token.lock().unwrap().is_empty() {
+        if self.access_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.refresh().await?;
         }
         let res = match self
@@ -161,7 +161,7 @@ impl Aliyundrive {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        *self.drive_id.lock().unwrap() = drive_id;
+        *self.drive_id.lock().unwrap_or_else(|e| e.into_inner()) = drive_id;
         Ok(())
     }
 
@@ -170,7 +170,7 @@ impl Aliyundrive {
             "" | "0" => "root",
             other => other,
         };
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut files = Vec::new();
         let mut marker = String::new();
         loop {
@@ -231,7 +231,7 @@ impl Aliyundrive {
     }
 
     pub async fn download(&self, e: &Entry) -> Result<DownloadInfo, String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -258,7 +258,7 @@ impl Aliyundrive {
     }
 
     pub async fn mkdir(&self, parent_fid: &str, name: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let parent = if parent_fid.is_empty() || parent_fid == "0" {
             "root"
         } else {
@@ -282,7 +282,7 @@ impl Aliyundrive {
     }
 
     pub async fn rename(&self, _p: &str, e: &Entry, new_name: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -295,7 +295,7 @@ impl Aliyundrive {
     }
 
     pub async fn move_entry(&self, _p: &str, e: &Entry, dst: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -308,7 +308,7 @@ impl Aliyundrive {
     }
 
     pub async fn copy(&self, _p: &str, e: &Entry, dst: &str) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,
@@ -321,7 +321,7 @@ impl Aliyundrive {
     }
 
     pub async fn remove(&self, _p: &str, e: &Entry) -> Result<(), String> {
-        let drive_id = self.drive_id.lock().unwrap().clone();
+        let drive_id = self.drive_id.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let body = json!({
             "drive_id": drive_id,
             "file_id": e.fid,

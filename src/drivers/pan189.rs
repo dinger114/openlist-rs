@@ -466,7 +466,12 @@ impl Cloud189 {
         let fid = self.normalize_fid(parent_fid);
         let mut files = Vec::new();
         let mut page: u32 = 1;
+        let mut pages = 0usize;
         loop {
+            pages += 1;
+            if pages > super::MAX_LIST_PAGES {
+                return Err(format!("分页超过 {} 页，已中止", super::MAX_LIST_PAGES));
+            }
             let page_str = page.to_string();
             let query = [
                 ("pageSize", "60"),
@@ -703,7 +708,7 @@ impl Cloud189 {
     /// 对齐 Go getResKey()：上传接口的 RSA 公钥，带过期缓存
     async fn get_res_key(&self) -> Result<(String, String), String> {
         let now = now_ms();
-        if let Some((pub_key, pk_id, expire)) = self.rsa_cache.lock().unwrap().as_ref() {
+        if let Some((pub_key, pk_id, expire)) = self.rsa_cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             if *expire > now {
                 return Ok((pub_key.clone(), pk_id.clone()));
             }
@@ -727,7 +732,7 @@ impl Cloud189 {
             .unwrap_or("")
             .to_string();
         let expire = v.get("expire").and_then(|x| x.as_i64()).unwrap_or(0);
-        *self.rsa_cache.lock().unwrap() = Some((pub_key.clone(), pk_id.clone(), expire));
+        *self.rsa_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((pub_key.clone(), pk_id.clone(), expire));
         Ok((pub_key, pk_id))
     }
 

@@ -50,7 +50,7 @@ impl Terabox {
 
     /// 从首页 HTML 抓 jsToken（对齐 Go 版 resetJsToken）
     async fn reset_js_token(&self) -> Result<(), String> {
-        let base = self.base_url.lock().unwrap().clone();
+        let base = self.base_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let resp = self
             .http
             .get(&base)
@@ -70,7 +70,7 @@ impl Terabox {
         if token.is_empty() {
             return Err("Terabox 未能从首页抓到 jsToken，请检查 cookie 是否有效".into());
         }
-        *self.js_token.lock().unwrap() = token;
+        *self.js_token.lock().unwrap_or_else(|e| e.into_inner()) = token;
         Ok(())
     }
 
@@ -86,7 +86,7 @@ impl Terabox {
         let full_url = if url_or_path.starts_with("https://") {
             url_or_path.to_string()
         } else {
-            format!("{}{url_or_path}", self.base_url.lock().unwrap().clone())
+            format!("{}{url_or_path}", self.base_url.lock().unwrap_or_else(|e| e.into_inner()).clone())
         };
         let send = |method: reqwest::Method,
                     query: Option<Vec<(String, String)>>,
@@ -98,7 +98,7 @@ impl Terabox {
                 .request(method, &full_url)
                 .header("Cookie", &self.cookie)
                 .header("User-Agent", UA)
-                .header("Referer", self.base_url.lock().unwrap().clone())
+                .header("Referer", self.base_url.lock().unwrap_or_else(|e| e.into_inner()).clone())
                 .header("X-Requested-With", "XMLHttpRequest")
                 .query(&[
                     ("app_id", "250528"),
@@ -118,11 +118,11 @@ impl Terabox {
             }
             req
         };
-        if self.js_token.lock().unwrap().is_empty() {
+        if self.js_token.lock().unwrap_or_else(|e| e.into_inner()).is_empty() {
             self.reset_js_token().await?;
         }
         // MutexGuard 临时值不能活过 .await（future 必须 Send），先取出 clone
-        let js_token = self.js_token.lock().unwrap().clone();
+        let js_token = self.js_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let resp = send(
             method.clone(),
             query.clone(),
@@ -144,12 +144,12 @@ impl Terabox {
         let v: Value = serde_json::from_str(&text).unwrap_or(json!({}));
         let errno = v.get("errno").and_then(|e| e.as_i64()).unwrap_or(0);
         if errno == -6 && !prefix.is_empty() {
-            *self.base_url.lock().unwrap() = format!("https://{prefix}.terabox.com");
+            *self.base_url.lock().unwrap_or_else(|e| e.into_inner()) = format!("https://{prefix}.terabox.com");
             return Box::pin(self.request(method, url_or_path, query, form, body)).await;
         }
         if errno == 4000023 || errno == 450016 {
             self.reset_js_token().await?;
-            let js_token = self.js_token.lock().unwrap().clone();
+            let js_token = self.js_token.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let resp = send(method, query, form, body, js_token)
                 .send()
                 .await
