@@ -12,4 +12,12 @@ ignore = [
     # 上游目前只发布了 0.10.0-rc（同样在告警范围内），没有已修补的稳定版本可升。
     # 待 rsa 0.10 正式版发布后应移除本条并升级依赖。
     "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2026-0543「chrono is unmaintained」：0.4 分支停止维护，公告本身
+    # 没有漏洞、只标记 unmaintained，且 `Solution: No fixed upgrade is available`。
+    # chrono 不是本仓库的直接依赖，唯一来源是 russh-sftp 3.0.1（SFTP 文件时间戳），
+    # 我们没有任何直接调用点可以替换；生态已在迁移（redb 5 就因此删掉了
+    # chrono_v0_4 feature）。
+    # 待 russh-sftp 换掉 chrono 后应移除本条。
+    "RUSTSEC-2026-0543",
 ]
