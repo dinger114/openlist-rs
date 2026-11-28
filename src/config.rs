@@ -713,7 +713,7 @@ pub struct Entry {
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use rand::RngExt;
-use redb::{Database, ReadableDatabase, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 /// 配置表：单行 "config"，value = nonce(12B) || AES-256-GCM 密文
 const CONFIG_TABLE_NAME: &str = "config";
@@ -751,7 +751,9 @@ impl Store {
         let raw: Option<Vec<u8>> = (|| {
             let txn = db.begin_read().ok()?;
             let table = txn.open_table(CONFIG_TABLE).ok()?;
-            table.get(CONFIG_ROW).ok()?.map(|v| v.value().to_vec())
+            // redb 5 起 AccessGuard 借用 table（不再返回 'static），先转成 Vec 再出块
+            let got = table.get(CONFIG_ROW).ok()?.map(|v| v.value().to_vec());
+            got
         })();
 
         let data = match raw {
