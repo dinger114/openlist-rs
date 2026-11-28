@@ -4120,6 +4120,141 @@ pub(crate) async fn offline_remove(
     Ok(Json(json!({ "ok": true })))
 }
 
+// ---------- 批量任务（后台执行 + 进度轮询，见 src/jobs.rs） ----------
+
+/// 一个源分组。移动/复制用 `src_dir`，删除用 `dir`；两个字段都收，按端点取其一。
+#[derive(Deserialize)]
+pub(crate) struct BatchGroupReq {
+    #[serde(default)]
+    pub(crate) src_dir: String,
+    #[serde(default)]
+    pub(crate) dir: String,
+    #[serde(default)]
+    pub(crate) names: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchMoveCopyReq {
+    #[serde(default)]
+    pub(crate) dst_dir: String,
+    #[serde(default)]
+    pub(crate) items: Vec<BatchGroupReq>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchRemoveReq {
+    #[serde(default)]
+    pub(crate) items: Vec<BatchGroupReq>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchRenameItem {
+    #[serde(default)]
+    pub(crate) path: String,
+    #[serde(default)]
+    pub(crate) name: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct BatchRenameReq {
+    #[serde(default)]
+    pub(crate) items: Vec<BatchRenameItem>,
+}
+
+fn batch_bad_request(msg: impl Into<String>) -> (StatusCode, String) {
+    (StatusCode::BAD_REQUEST, msg.into())
+}
+
+/// POST /api/batch/move —— 建后台任务，立即返回 {id}，进度走 /api/batch/tasks
+pub(crate) async fn batch_move(
+    State(st): State<AppState>,
+    Json(req): Json<BatchMoveCopyReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    submit_move_copy(st, true, req)
+}
+
+/// POST /api/batch/copy
+pub(crate) async fn batch_copy(
+    State(st): State<AppState>,
+    Json(req): Json<BatchMoveCopyReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    submit_move_copy(st, false, req)
+}
+
+fn submit_move_copy(
+    st: AppState,
+    is_move: bool,
+    req: BatchMoveCopyReq,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let groups = req
+        .items
+        .into_iter()
+        .map(|g| (g.src_dir, g.names))
+        .collect();
+    crate::jobs::spawn_move_or_copy(st, is_move, req.dst_dir, groups)
+        .map(|id| Json(json!({ "id": id })))
+        .map_err(batch_bad_request)
+}
+
+/// POST /api/batch/remove
+pub(crate) async fn batch_remove(
+    State(st): State<AppState>,
+    Json(req): Json<BatchRemoveReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let groups = req
+        .items
+        .into_iter()
+        .map(|g| (g.dir, g.names))
+        .collect();
+    crate::jobs::spawn_remove(st, groups)
+        .map(|id| Json(json!({ "id": id })))
+        .map_err(batch_bad_request)
+}
+
+/// POST /api/batch/rename
+pub(crate) async fn batch_rename(
+    State(st): State<AppState>,
+    Json(req): Json<BatchRenameReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let items = req
+        .items
+        .into_iter()
+        .map(|i| (i.path, i.name))
+        .collect();
+    crate::jobs::spawn_rename(st, items)
+        .map(|id| Json(json!({ "id": id })))
+        .map_err(batch_bad_request)
+}
+
+/// GET /api/batch/tasks —— 任务列表（前端有进行中的任务时轮询）
+pub(crate) async fn batch_tasks(State(st): State<AppState>) -> Json<Value> {
+    Json(json!({ "tasks": st.jobs.list() }))
+}
+
+/// POST /api/batch/tasks/{id}/cancel —— 当前项做完后停手
+pub(crate) async fn batch_cancel(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if st.jobs.cancel(&id) {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "任务不存在或已结束".into()))
+    }
+}
+
+/// DELETE /api/batch/tasks/{id} —— 从任务表移除终态任务（进行中的拒绝）
+pub(crate) async fn batch_dismiss(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    if st.jobs.dismiss(&id) {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err((StatusCode::CONFLICT, "任务不存在或仍在运行".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

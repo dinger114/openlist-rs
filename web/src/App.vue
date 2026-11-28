@@ -169,31 +169,14 @@
       @cancel="offlineCancel"
     />
 
-    <!-- 上传任务面板 -->
-    <div v-if="uploads.length" class="upload-panel card">
-      <div class="upload-head">
-        <span>上传任务</span>
-        <button class="btn-icon btn-ghost" title="清除已完成" @click="clearFinishedUploads">
-          <Icon name="close" :size="14" />
-        </button>
-      </div>
-      <div v-for="(t, i) in uploads" :key="i" class="upload-item">
-        <div class="upload-name" :title="t.relPath">
-          <Icon :name="t.status === 'error' ? 'alert' : 'upload'" :size="14" />
-          {{ t.relPath }}
-        </div>
-        <div class="upload-bar">
-          <div
-            class="upload-bar-fill"
-            :class="{ done: t.status === 'done', fail: t.status === 'error' }"
-            :style="{ width: uploadPct(t) + '%' }"
-          ></div>
-        </div>
-        <div class="upload-meta">
-          {{ t.status === 'error' ? t.error : `${fmtSize(t.loaded)} / ${fmtSize(t.size)}` }}
-        </div>
-      </div>
-    </div>
+    <!-- 任务面板：批量操作（服务端后台进度）+ 上传（XHR 进度） -->
+    <BatchTaskPanel
+      :uploads="uploads"
+      :jobs="batchJobs"
+      @clear-uploads="clearFinishedUploads"
+      @cancel-job="cancelBatchJob"
+      @dismiss-job="dismissBatchJob"
+    />
 
     <!-- 页脚（对齐官方 Footer：Powered by | 管理） -->
     <footer class="app-footer">
@@ -214,6 +197,8 @@ import FilesView from './components/FilesView.vue'
 import SettingsView from './components/SettingsView.vue'
 import OfflineDialog from './components/OfflineDialog.vue'
 import BatchRenameDialog from './components/BatchRenameDialog.vue'
+import BatchTaskPanel from './components/BatchTaskPanel.vue'
+import { useBatchJobs } from './composables/useBatchJobs'
 import { kindOf } from './filekinds.js'
 
 const loginViewRef = ref(null)
@@ -1326,7 +1311,24 @@ async function openPath(path) {
   }
 }
 
-// ----- 批量操作（入口在 FilesView 的常驻批量栏） -----
+// ----- 批量操作（入口在 FilesView 的常驻批量栏；执行走服务端后台任务，见 src/jobs.rs） -----
+
+// 任务进度：提交后立即返回 id，任务面板按 /api/batch/tasks 轮询画进度条
+const {
+  jobs: batchJobs,
+  submit: submitBatch,
+  cancel: cancelBatchJob,
+  dismiss: dismissBatchJob,
+  refresh: refreshBatch,
+  onFinished: onBatchFinished
+} = useBatchJobs({ request: api })
+
+// 批量任务跑完后刷新当前视图：搜索结果可能跨目录，不能用 listFiles 拍平
+async function refreshAfterBatch() {
+  if (search.value.active) await runSearch()
+  else if (currentId.value) await refreshCurrent()
+}
+onBatchFinished(() => refreshAfterBatch())
 
 async function fsBatchRemove(list) {
   const dirCount = list.filter((e) => e.is_dir).length
@@ -1335,19 +1337,12 @@ async function fsBatchRemove(list) {
   const where = groups.size > 1 ? `（分布在 ${groups.size} 个目录）` : ''
   if (!confirm(`确认删除选中的 ${list.length} 项${where}？${extra}此操作不可恢复！`)) return
   try {
-    // 搜索结果可能跨目录：按所在目录分组，一组一次请求
-    for (const [dir, items] of groups) {
-      await api('/api/fs/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir, names: items.map((e) => e.name) })
-      })
-    }
-    await refreshCurrent()
+    // 搜索结果可能跨目录：按所在目录分组交给同一个后台任务，进度条按整批算
+    await submitBatch('remove', {
+      items: [...groups].map(([dir, items]) => ({ dir, names: items.map((e) => e.name) }))
+    })
   } catch (ex) {
-    // 服务端是「遇错即中断」：第一个失败项之后的没执行、之前的已生效 → 先刷新让用户看到真实结果
-    await refreshCurrent()
-    fsErr(new Error(`${ex.message || ex}（该批在此项处中断，之前的已生效）`))
+    fsErr(ex)
   }
 }
 
@@ -1370,24 +1365,19 @@ const renameSiblings = computed(() =>
 
 async function doBatchRename(names) {
   renaming.value = false
-  const ok = []
-  const bad = []
-  for (const [i, e] of renameList.value.entries()) {
+  // 只提交真正改动的行；执行在服务端后台，进度在任务面板
+  const items = []
+  renameList.value.forEach((e, i) => {
     const n = names[i]
-    if (n === e.name) continue
-    try {
-      await api('/api/fs/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: entryPath(e), name: n })
-      })
-      ok.push(n)
-    } catch (ex) {
-      bad.push(`${e.name} → ${n}：${ex.message || ex}`)
-    }
+    if (!n || n === e.name) return
+    items.push({ path: entryPath(e), name: n })
+  })
+  if (!items.length) return
+  try {
+    await submitBatch('rename', { items })
+  } catch (ex) {
+    fsErr(ex)
   }
-  await refreshCurrent()
-  if (bad.length) fsErr(new Error(`${ok.length} 项已重命名，${bad.length} 项失败：${bad.join('；')}`))
 }
 
 // ----- 目标目录选择弹窗（移动/复制共用；批量时装多个条目） -----
@@ -1463,24 +1453,20 @@ async function pickerConfirm() {
   const p = picker.value
   if (p.busy) return
   const dst = '/' + p.crumbs.map((c) => c.name).join('/')
-  const endpoint = p.mode === 'move' ? '/api/fs/move' : '/api/fs/copy'
   p.busy = true
   try {
-    // 搜索结果可能跨目录：按源目录分组，一组一次请求
-    for (const [dir, items] of groupByDir(p.entries)) {
-      await api(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ src_dir: dir, dst_dir: dst, names: items.map((x) => x.name) })
-      })
-    }
+    // 搜索结果可能跨目录：按源目录分组交给同一个后台任务（进度条按整批算）
+    await submitBatch(p.mode, {
+      dst_dir: dst,
+      items: [...groupByDir(p.entries)].map(([src_dir, items]) => ({
+        src_dir,
+        names: items.map((x) => x.name)
+      }))
+    })
     p.open = false
-    await refreshCurrent()
   } catch (e) {
-    // 遇错即中断：之前的组已生效 → 先刷新再报错
     p.open = false
-    await refreshCurrent()
-    fsErr(new Error(`${e.message || e}（该批在此项处中断，之前的已生效）`))
+    fsErr(e)
   } finally {
     p.busy = false
   }
@@ -1488,23 +1474,6 @@ async function pickerConfirm() {
 
 // ----- 上传（浏览器 -> /api/fs/form，XHR 自带进度） -----
 const uploads = ref([])
-
-function fmtSize(n) {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let i = 0
-  let v = n
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
-}
-
-function uploadPct(t) {
-  if (t.status === 'done') return 100
-  if (!t.size) return t.status === 'uploading' ? 5 : 100
-  return Math.min(99, Math.round((t.loaded / t.size) * 100))
-}
 
 function clearFinishedUploads() {
   uploads.value = uploads.value.filter((t) => t.status === 'uploading')
@@ -1583,6 +1552,8 @@ onMounted(async () => {
   } catch {
     /* 401 时已弹出登录 */
   }
+  // 刷新页面时把还在跑的批量任务接回来（服务端任务不随页面刷新消失）
+  refreshBatch()
 })
 </script>
 
@@ -1806,68 +1777,5 @@ onMounted(async () => {
 .app-footer a:hover {
   color: var(--ol-primary);
   text-decoration: none;
-}
-
-/* 上传任务面板 */
-.upload-panel {
-  position: fixed;
-  right: 28px;
-  bottom: 96px;
-  z-index: 90;
-  width: min(340px, calc(100vw - 40px));
-  max-height: 40vh;
-  overflow: auto;
-  padding: 10px 12px;
-}
-.upload-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-  font-size: 13.5px;
-  margin-bottom: 6px;
-}
-.upload-item {
-  padding: 6px 0;
-  border-bottom: 1px solid var(--ol-border);
-}
-.upload-item:last-child {
-  border-bottom: none;
-}
-.upload-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  color: var(--ol-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.upload-bar {
-  height: 4px;
-  margin: 5px 0 4px;
-  background: var(--ol-bg);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.upload-bar-fill {
-  height: 100%;
-  background: var(--ol-primary);
-  border-radius: 999px;
-  transition: width 0.2s ease;
-}
-.upload-bar-fill.done {
-  background: #2fa96c;
-}
-.upload-bar-fill.fail {
-  background: #e5484d;
-}
-.upload-meta {
-  font-size: 11px;
-  color: var(--ol-text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

@@ -5,6 +5,7 @@ mod backup;
 mod compat;
 mod config;
 mod drivers;
+mod jobs;
 mod offline;
 mod password;
 mod ratelimit;
@@ -232,6 +233,14 @@ async fn main() {
         .route("/api/offline/add", post(api::offline_add))
         .route("/api/offline/tasks", get(api::offline_tasks))
         .route("/api/offline/remove", post(api::offline_remove))
+        // 批量任务（后台执行 + 进度轮询，见 src/jobs.rs）
+        .route("/api/batch/move", post(api::batch_move))
+        .route("/api/batch/copy", post(api::batch_copy))
+        .route("/api/batch/remove", post(api::batch_remove))
+        .route("/api/batch/rename", post(api::batch_rename))
+        .route("/api/batch/tasks", get(api::batch_tasks))
+        .route("/api/batch/tasks/{id}/cancel", post(api::batch_cancel))
+        .route("/api/batch/tasks/{id}", delete(api::batch_dismiss))
         .route("/d/{*path}", get(compat::compat_down))
         .route("/p/{*path}", get(compat::compat_proxy))
         // WebDAV 服务（自带 Basic/Bearer 鉴权，见 src/webdav.rs）

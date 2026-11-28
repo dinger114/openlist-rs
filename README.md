@@ -13,7 +13,7 @@
 - 夸克 `__puus` cookie 滚动更新自动回写；123 网盘 401 自动重登；123 列表接口 700ms 限速（对齐 Go 版）
 - **WebDAV 服务**：`/dav` 端点，访达 / 资源管理器 / rclone 可直接挂载（面板账号 Basic 认证；读写按驱动能力，只读存储写操作回 403）
 - **存储启用/禁用**：管理页每张存储卡片附有开关，关闭后该存储从网盘列表隐藏，不影响配置数据
-- **批量操作**：列表行左侧复选框 + 面包屑下方常驻批量栏（全选/半选/反选/清除选择），可批量移动、复制（含文件夹）、重命名（逐行改名或查找替换）、删除；移动/复制不能选当前目录，也不能把文件夹放进它自己里面
+- **批量操作**：列表行左侧复选框 + 面包屑下方常驻批量栏（全选/半选/反选/清除选择），可批量移动、复制（含文件夹）、重命名（逐行改名或查找替换）、删除；移动/复制不能选当前目录，也不能把文件夹放进它自己里面。**批量操作在服务端后台执行**：提交后立即返回，右下角任务面板按 `已完成/总数` 显示进度条、当前处理项与失败项，可取消（做完当前项就停）；单项失败不中断整批，结束时汇总失败原因
 - **目录内搜索**：面包屑行右侧搜索框，从当前目录往下搜（1/2/3/全部层，默认 1 层，可含文件夹）；结果按「文件名 + 所在目录」列出，可勾选后**跨目录**批量移动/复制/重命名/删除（按所在目录分组提交），也能一键跳到命中项所在目录。按需遍历 + 复用列表缓存，扫目录 ≤300 / 结果 ≤500 并给出触顶提示
 - **多存储驱动**：夸克 / UC / 夸克Open / 夸克TV / UC TV、123网盘 / 123Open / 123Link、阿里云盘（旧）/ 阿里云盘Open / 阿里分享、115网盘 / 115Open / 115分享、百度网盘、天翼云盘、移动云盘、迅雷、蓝奏云、蓝奏云优创 / 飞鸡盘、Terabox、OneDrive / OneDrive分享 / OneDriveAPP、Google Drive / Google Photo、Dropbox、PikPak / PikPak分享、Yandex.Disk、S3 / BunnyCDN、SFTP、FTP、SMB、WebDAV、AList v3、OpenList 挂载 / OpenList 分享、Seafile、可道云 KodBox、Cloudreve V4、虚拟存储（测试）等
 
@@ -155,6 +155,13 @@ http://<面板地址>/dav
 | POST | `/api/offline/add` | 提交离线任务 `{path, urls[], tool}`，由网盘服务端抓取到 `path` 目录 |
 | GET | `/api/offline/tasks` | 本机离线任务列表（面板弹窗按需轮询） |
 | POST | `/api/offline/remove` | 取消任务 `{ids[]}`（只删供应商侧记录，不动文件） |
+| POST | `/api/batch/move` | 后台批量移动 `{dst_dir, items:[{src_dir, names[]}]}`，立即返回 `{id}`；进度从 `/api/batch/tasks` 轮询 |
+| POST | `/api/batch/copy` | 后台批量复制，请求体同上 |
+| POST | `/api/batch/remove` | 后台批量删除 `{items:[{dir, names[]}]}` |
+| POST | `/api/batch/rename` | 后台批量重命名 `{items:[{path, name}]}` |
+| GET | `/api/batch/tasks` | 批量任务列表：`{id, kind, label, total, done, failed, state, current, errors}`；`done` 含失败项，`state` 为 `running/succeeded/partial/canceled` |
+| POST | `/api/batch/tasks/{id}/cancel` | 取消任务（当前项做完后停手） |
+| DELETE | `/api/batch/tasks/{id}` | 从任务表移除终态任务（进行中的返回 409） |
 
 ## 架构
 
@@ -167,6 +174,7 @@ openlist-rs/
 │   ├── api.rs            自有面板 API（账号/文件/流式代理）
 │   ├── compat.rs         OpenList 官方 API 兼容层（AList 协议）
 │   ├── offline.rs        原生离线下载任务表（内存态 + 3 秒轮询器）
+│   ├── jobs.rs           批量任务表（移动/复制/删除/重命名：后台执行 + 进度轮询）
 │   ├── search.rs         目录内搜索（按需 BFS + 扫描/结果上限，复用列表缓存）
 │   ├── assets.rs         rust-embed 嵌入 web/dist + SPA 静态服务
 │   ├── config.rs         账号持久化（redb + AES-256-GCM）+ 统一文件模型 Entry

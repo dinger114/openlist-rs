@@ -48,6 +48,13 @@
                 {{ t.status_text }}
                 <span v-if="t.error" class="dlg-err"> · {{ t.error }}</span>
               </div>
+              <div class="dlg-bar">
+                <div
+                  class="dlg-bar-fill"
+                  :class="`is-${t.state}`"
+                  :style="{ width: barPct(t) + '%' }"
+                ></div>
+              </div>
             </div>
             <div class="dlg-item-side">
               <span class="dlg-pct">{{ Math.round(t.progress) }}%</span>
@@ -92,6 +99,12 @@ watchEffect(() => {
 })
 const canSubmit = computed(() => !!tool.value && urls.value.split('\n').some((u) => u.trim()))
 const running = computed(() => props.tasks.filter((t) => t.state === 'running').length)
+
+// 进度条宽度：终态铺满（成功绿 / 失败红），进行中按供应商给的百分比
+function barPct(t) {
+  if (t.state === 'running') return Math.max(0, Math.min(100, Number(t.progress) || 0))
+  return 100
+}
 
 watch(
   () => props.resetKey,
@@ -250,6 +263,29 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   color: var(--ol-text-dim);
   font-size: 12px;
   margin-top: 2px;
+}
+.dlg-bar {
+  height: 4px;
+  margin-top: 5px;
+  background: var(--ol-bg);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dlg-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--ol-primary);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.dlg-bar-fill.is-succeeded {
+  background: #2fa96c;
+}
+.dlg-bar-fill.is-failed {
+  background: #e5484d;
+}
+.dlg-bar-fill.is-removed {
+  background: var(--ol-text-faint);
 }
 .dlg-item-side {
   display: flex;
