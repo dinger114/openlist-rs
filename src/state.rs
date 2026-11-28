@@ -193,6 +193,8 @@ pub(crate) struct AppState {
     pub(crate) upload_progress: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicU64>>>>,
     /// 原生离线下载任务表（内存态，见 src/offline.rs）
     pub(crate) offline: Arc<crate::offline::OfflineManager>,
+    /// 批量操作任务表（移动/复制/删除/重命名，见 src/jobs.rs）
+    pub(crate) jobs: Arc<crate::jobs::BatchManager>,
 }
 
 impl AppState {
@@ -210,6 +212,7 @@ impl AppState {
             list_cache: Arc::new(ListCache::new()),
             upload_progress: Arc::new(Mutex::new(HashMap::new())),
             offline: Arc::new(crate::offline::OfflineManager::new()),
+            jobs: Arc::new(crate::jobs::BatchManager::new()),
         }
     }
 
